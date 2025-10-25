@@ -33,9 +33,20 @@ const WelcomeWizard = ({ onComplete }) => {
 
   // Step 2: Upload template file
   const onDropTemplate = async (acceptedFiles) => {
-    if (acceptedFiles.length === 0) return;
+    if (acceptedFiles.length === 0) {
+      toast.warning('Lütfen bir Excel dosyası seçin (.xlsx, .xls veya .csv)');
+      return;
+    }
 
     const file = acceptedFiles[0];
+    
+    // Manual file type check
+    const fileName = file.name.toLowerCase();
+    if (!fileName.endsWith('.xlsx') && !fileName.endsWith('.xls') && !fileName.endsWith('.csv')) {
+      toast.error('Sadece Excel dosyaları kabul edilir (.xlsx, .xls, .csv)');
+      return;
+    }
+
     setTemplateFile(file);
     setLoading(true);
 
@@ -86,9 +97,11 @@ const WelcomeWizard = ({ onComplete }) => {
     onDrop: onDropSample,
     accept: {
       'application/pdf': ['.pdf'],
-      'image/*': ['.jpg', '.jpeg', '.png'],
+      'image/jpeg': ['.jpg', '.jpeg'],
+      'image/png': ['.png']
     },
     maxFiles: 1,
+    multiple: false
   });
 
   const templateDropzone = useDropzone({
@@ -96,9 +109,12 @@ const WelcomeWizard = ({ onComplete }) => {
     accept: {
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
       'application/vnd.ms-excel': ['.xls'],
-      'text/csv': ['.csv'],
+      'text/csv': ['.csv']
     },
     maxFiles: 1,
+    multiple: false,
+    noClick: false,
+    noKeyboard: false
   });
 
   return (
@@ -109,15 +125,15 @@ const WelcomeWizard = ({ onComplete }) => {
       {/* Progress indicator */}
       <div className="flex items-center justify-center mb-8">
         <div className="flex items-center">
-          <div className={`w-10 h-10 rounded-full flex items-center justify-center ${step >= 1 ? 'bg-primary-600 text-white' : 'bg-gray-300'}`}>
+          <div className={`w-10 h-10 rounded-full flex items-center justify-center ${step >= 1 ? 'bg-blue-600 text-white' : 'bg-gray-300'}`}>
             1
           </div>
-          <div className={`w-24 h-1 ${step >= 2 ? 'bg-primary-600' : 'bg-gray-300'}`}></div>
-          <div className={`w-10 h-10 rounded-full flex items-center justify-center ${step >= 2 ? 'bg-primary-600 text-white' : 'bg-gray-300'}`}>
+          <div className={`w-24 h-1 ${step >= 2 ? 'bg-blue-600' : 'bg-gray-300'}`}></div>
+          <div className={`w-10 h-10 rounded-full flex items-center justify-center ${step >= 2 ? 'bg-blue-600 text-white' : 'bg-gray-300'}`}>
             2
           </div>
-          <div className={`w-24 h-1 ${step >= 3 ? 'bg-primary-600' : 'bg-gray-300'}`}></div>
-          <div className={`w-10 h-10 rounded-full flex items-center justify-center ${step >= 3 ? 'bg-primary-600 text-white' : 'bg-gray-300'}`}>
+          <div className={`w-24 h-1 ${step >= 3 ? 'bg-blue-600' : 'bg-gray-300'}`}></div>
+          <div className={`w-10 h-10 rounded-full flex items-center justify-center ${step >= 3 ? 'bg-blue-600 text-white' : 'bg-gray-300'}`}>
             3
           </div>
         </div>
@@ -125,7 +141,7 @@ const WelcomeWizard = ({ onComplete }) => {
 
       {/* Step 1: Upload Sample Document */}
       {step === 1 && (
-        <div className="card">
+        <div className="bg-white shadow-lg rounded-lg p-6">
           <h2 className="text-2xl font-semibold mb-4">Adım 1: Örnek Belge Yükleyin</h2>
           <p className="text-gray-600 mb-4">
             Sisteme öğretmek için bir örnek belge yükleyin (PDF, JPG veya PNG)
@@ -133,7 +149,11 @@ const WelcomeWizard = ({ onComplete }) => {
 
           <div
             {...sampleDropzone.getRootProps()}
-            className={`dropzone ${sampleDropzone.isDragActive ? 'dropzone-active' : ''}`}
+            className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
+              sampleDropzone.isDragActive 
+                ? 'border-blue-500 bg-blue-50' 
+                : 'border-gray-300 hover:border-blue-400'
+            }`}
           >
             <input {...sampleDropzone.getInputProps()} />
             {sampleDoc ? (
@@ -152,7 +172,7 @@ const WelcomeWizard = ({ onComplete }) => {
           {sampleDoc && documentId && (
             <button
               onClick={() => setStep(2)}
-              className="btn btn-primary mt-4 w-full"
+              className="mt-4 w-full bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition-colors"
             >
               Devam Et
             </button>
@@ -162,7 +182,7 @@ const WelcomeWizard = ({ onComplete }) => {
 
       {/* Step 2: Upload Template */}
       {step === 2 && (
-        <div className="card">
+        <div className="bg-white shadow-lg rounded-lg p-6">
           <h2 className="text-2xl font-semibold mb-4">Adım 2: Excel Şablonu Yükleyin</h2>
           <p className="text-gray-600 mb-4">
             Çıkarmak istediğiniz alanları içeren Excel şablonunu yükleyin
@@ -170,7 +190,11 @@ const WelcomeWizard = ({ onComplete }) => {
 
           <div
             {...templateDropzone.getRootProps()}
-            className={`dropzone ${templateDropzone.isDragActive ? 'dropzone-active' : ''}`}
+            className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${
+              templateDropzone.isDragActive 
+                ? 'border-green-500 bg-green-50' 
+                : 'border-gray-300 hover:border-green-400'
+            }`}
           >
             <input {...templateDropzone.getInputProps()} />
             {templateFile ? (
@@ -191,7 +215,7 @@ const WelcomeWizard = ({ onComplete }) => {
               <h3 className="font-medium mb-2">Bulunan Alanlar:</h3>
               <div className="flex flex-wrap gap-2">
                 {templateFields.map((field, idx) => (
-                  <span key={idx} className="px-3 py-1 bg-primary-100 text-primary-700 rounded-full text-sm">
+                  <span key={idx} className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm">
                     {field.field_name}
                   </span>
                 ))}
@@ -202,14 +226,14 @@ const WelcomeWizard = ({ onComplete }) => {
           <div className="flex gap-3 mt-4">
             <button
               onClick={() => setStep(1)}
-              className="btn btn-secondary flex-1"
+              className="flex-1 bg-gray-200 text-gray-700 py-3 rounded-lg font-medium hover:bg-gray-300 transition-colors"
             >
               Geri
             </button>
             {templateFile && templateId && (
               <button
                 onClick={() => setStep(3)}
-                className="btn btn-primary flex-1"
+                className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition-colors"
               >
                 Devam Et
               </button>
@@ -220,7 +244,7 @@ const WelcomeWizard = ({ onComplete }) => {
 
       {/* Step 3: Analyze */}
       {step === 3 && (
-        <div className="card">
+        <div className="bg-white shadow-lg rounded-lg p-6">
           <h2 className="text-2xl font-semibold mb-4">Adım 3: Analiz Et</h2>
           <p className="text-gray-600 mb-4">
             Belge ve şablon hazır. AI ile analiz etmeye başlayın.
@@ -244,19 +268,22 @@ const WelcomeWizard = ({ onComplete }) => {
           <div className="flex gap-3">
             <button
               onClick={() => setStep(2)}
-              className="btn btn-secondary flex-1"
+              className="flex-1 bg-gray-200 text-gray-700 py-3 rounded-lg font-medium hover:bg-gray-300 transition-colors"
               disabled={loading}
             >
               Geri
             </button>
             <button
               onClick={handleAnalyze}
-              className="btn btn-primary flex-1"
+              className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:bg-gray-400"
               disabled={loading}
             >
               {loading ? (
                 <span className="flex items-center justify-center">
-                  <div className="spinner mr-2" style={{ width: '20px', height: '20px', borderWidth: '2px' }}></div>
+                  <svg className="animate-spin h-5 w-5 mr-2" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
                   Analiz Ediliyor...
                 </span>
               ) : (
@@ -270,7 +297,10 @@ const WelcomeWizard = ({ onComplete }) => {
       {loading && step !== 3 && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white p-6 rounded-lg">
-            <div className="spinner mx-auto mb-4"></div>
+            <svg className="animate-spin h-10 w-10 mx-auto mb-4 text-blue-600" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
             <p className="text-gray-700">Yükleniyor...</p>
           </div>
         </div>
