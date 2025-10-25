@@ -98,7 +98,10 @@ const WelcomeWizard = ({ onComplete }) => {
     accept: {
       'application/pdf': ['.pdf'],
       'image/jpeg': ['.jpg', '.jpeg'],
-      'image/png': ['.png']
+      'image/png': ['.png'],
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
+      'application/vnd.ms-excel': ['.xls'],
+      'text/csv': ['.csv']
     },
     maxFiles: 1,
     multiple: false
@@ -144,7 +147,7 @@ const WelcomeWizard = ({ onComplete }) => {
         <div className="bg-white shadow-lg rounded-lg p-6">
           <h2 className="text-2xl font-semibold mb-4">Adım 1: Örnek Belge Yükleyin</h2>
           <p className="text-gray-600 mb-4">
-            Sisteme öğretmek için bir örnek belge yükleyin (PDF, JPG veya PNG)
+            Sisteme öğretmek için bir örnek belge yükleyin (PDF, JPG, PNG veya Excel)
           </p>
 
           <div
@@ -164,7 +167,7 @@ const WelcomeWizard = ({ onComplete }) => {
             ) : (
               <div>
                 <p className="text-gray-600">Belgeyi buraya sürükleyin veya tıklayın</p>
-                <p className="text-sm text-gray-400 mt-2">PDF, JPG, PNG (Maks. 10MB)</p>
+                <p className="text-sm text-gray-400 mt-2">PDF, JPG, PNG, XLSX, XLS, CSV (Maks. 10MB)</p>
               </div>
             )}
           </div>
