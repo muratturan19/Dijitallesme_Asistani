@@ -2,7 +2,7 @@
 import pytesseract
 from PIL import Image
 import logging
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple, Union
 import sys
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,12 @@ class OCREngine:
             logger.error(f"Tesseract bulunamadı: {str(e)}")
             logger.error("Tesseract kurulumu gerekli: https://github.com/tesseract-ocr/tesseract")
 
-    def extract_text(self, image_path: str) -> Dict[str, Any]:
+    def extract_text(
+        self,
+        image_path: str,
+        options: Optional[Dict[str, Any]] = None,
+        roi: Optional[Union[Dict[str, Any], List[int], Tuple[int, int, int, int]]] = None
+    ) -> Dict[str, Any]:
         """
         Extract text from image with detailed information
 
@@ -50,18 +55,22 @@ class OCREngine:
         try:
             # Open image
             image = Image.open(image_path)
+            processed_image = self._apply_roi(image, roi)
+
+            lang, config = self._build_tesseract_config(options)
 
             # Extract text
             text = pytesseract.image_to_string(
-                image,
-                lang=self.language,
-                config='--psm 3'  # Fully automatic page segmentation
+                processed_image,
+                lang=lang,
+                config=config
             )
 
             # Extract detailed data (word-level)
             data = pytesseract.image_to_data(
-                image,
-                lang=self.language,
+                processed_image,
+                lang=lang,
+                config=config,
                 output_type=pytesseract.Output.DICT
             )
 
@@ -126,7 +135,12 @@ class OCREngine:
                 'error': str(e)
             }
 
-    def extract_text_simple(self, image_path: str) -> str:
+    def extract_text_simple(
+        self,
+        image_path: str,
+        options: Optional[Dict[str, Any]] = None,
+        roi: Optional[Union[Dict[str, Any], List[int], Tuple[int, int, int, int]]] = None
+    ) -> str:
         """
         Simple text extraction (just the text)
 
@@ -138,11 +152,52 @@ class OCREngine:
         """
         try:
             image = Image.open(image_path)
-            text = pytesseract.image_to_string(image, lang=self.language)
+            processed_image = self._apply_roi(image, roi)
+
+            lang, config = self._build_tesseract_config(options)
+
+            text = pytesseract.image_to_string(
+                processed_image,
+                lang=lang,
+                config=config
+            )
             return text.strip()
         except Exception as e:
             logger.error(f"OCR hatası {image_path}: {str(e)}")
             return ""
+
+    def extract_regions(
+        self,
+        image_path: str,
+        regions: List[Dict[str, Any]],
+        base_options: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Dict[str, Any]]:
+        """Run OCR on multiple regions with optional per-region overrides."""
+
+        results: Dict[str, Dict[str, Any]] = {}
+
+        if not regions:
+            return results
+
+        for index, region in enumerate(regions):
+            label = str(region.get('id') or region.get('field') or index)
+            roi = region.get('roi', region.get('box', region.get('region')))
+
+            region_options: Dict[str, Any] = {}
+            if base_options:
+                region_options.update(base_options)
+            if isinstance(region.get('options'), dict):
+                region_options.update(region['options'])
+            if isinstance(region.get('ocr_options'), dict):
+                region_options.update(region['ocr_options'])
+
+            results[label] = self.extract_text(
+                image_path,
+                options=region_options if region_options else None,
+                roi=roi
+            )
+
+        return results
 
     def extract_structured_data(self, image_path: str) -> Dict[str, List[str]]:
         """
@@ -226,3 +281,139 @@ class OCREngine:
         except Exception as e:
             logger.error(f"Dil listesi alınamadı: {str(e)}")
             return []
+
+    def _build_tesseract_config(
+        self,
+        options: Optional[Dict[str, Any]] = None
+    ) -> Tuple[str, Optional[str]]:
+        """Construct language and config string for Tesseract."""
+
+        lang = self.language
+        config_parts: List[str] = []
+
+        if options:
+            if options.get('language'):
+                lang = options['language']
+
+            custom_config = options.get('config')
+            if isinstance(custom_config, (list, tuple)):
+                config_parts.extend(str(item) for item in custom_config if item)
+            elif isinstance(custom_config, str):
+                config_parts.append(custom_config)
+
+            psm_value = options.get('psm')
+            psm_in_config = any('--psm' in str(part) for part in config_parts)
+            if psm_value is not None:
+                if not psm_in_config:
+                    config_parts.append(f'--psm {int(psm_value)}')
+            elif not psm_in_config:
+                config_parts.append('--psm 3')
+
+            oem_value = options.get('oem')
+            if oem_value is not None:
+                config_parts.append(f'--oem {int(oem_value)}')
+
+            whitelist = options.get('whitelist') or options.get('char_whitelist')
+            if whitelist:
+                config_parts.append(f'-c tessedit_char_whitelist={whitelist}')
+
+            blacklist = options.get('blacklist')
+            if blacklist:
+                config_parts.append(f'-c tessedit_char_blacklist={blacklist}')
+
+            dpi = options.get('dpi')
+            if dpi is not None:
+                config_parts.append(f'--dpi {int(dpi)}')
+
+            variables = options.get('variables')
+            if isinstance(variables, dict):
+                for key, value in variables.items():
+                    config_parts.append(f'-c {key}={value}')
+        else:
+            config_parts.append('--psm 3')
+
+        config = ' '.join(str(part) for part in config_parts if str(part).strip())
+        return lang, config if config else None
+
+    def _apply_roi(
+        self,
+        image: Image.Image,
+        roi: Optional[Union[Dict[str, Any], List[int], Tuple[int, int, int, int]]]
+    ) -> Image.Image:
+        """Crop PIL image according to ROI definition if provided."""
+
+        if roi is None:
+            return image
+
+        box = self._normalize_roi_box(roi, image.size)
+        if not box:
+            return image
+
+        try:
+            return image.crop(box)
+        except Exception:
+            return image
+
+    def _normalize_roi_box(
+        self,
+        roi: Union[Dict[str, Any], List[int], Tuple[int, ...]],
+        image_size: Tuple[int, int]
+    ) -> Optional[Tuple[int, int, int, int]]:
+        """Normalize ROI definitions into a PIL crop box."""
+
+        try:
+            width, height = image_size
+
+            if isinstance(roi, (list, tuple)):
+                if len(roi) == 4 and all(isinstance(val, (int, float)) for val in roi):
+                    x, y, w, h = roi
+                elif roi and isinstance(roi[0], (list, tuple, dict)):
+                    # Nested ROI definitions - use the first entry
+                    return self._normalize_roi_box(roi[0], image_size)
+                else:
+                    return None
+            elif isinstance(roi, dict):
+                x = float(roi.get('x', roi.get('left', 0)))
+                y = float(roi.get('y', roi.get('top', 0)))
+                if 'width' in roi or 'w' in roi:
+                    w = float(roi.get('width', roi.get('w', 0)))
+                elif 'x2' in roi:
+                    w = float(roi['x2']) - x
+                else:
+                    w = 0
+
+                if 'height' in roi or 'h' in roi:
+                    h = float(roi.get('height', roi.get('h', 0)))
+                elif 'y2' in roi:
+                    h = float(roi['y2']) - y
+                else:
+                    h = 0
+
+                padding_x = padding_y = 0
+                if roi.get('padding') is not None:
+                    padding = roi['padding']
+                    if isinstance(padding, (list, tuple)) and len(padding) >= 2:
+                        padding_x = float(padding[0])
+                        padding_y = float(padding[1])
+                    else:
+                        padding_x = padding_y = float(padding)
+
+                x -= padding_x
+                y -= padding_y
+                w += padding_x * 2
+                h += padding_y * 2
+            else:
+                return None
+
+            x1 = max(0, int(x))
+            y1 = max(0, int(y))
+            x2 = min(width, int(x + w))
+            y2 = min(height, int(y + h))
+
+            if x2 <= x1 or y2 <= y1:
+                return None
+
+            return x1, y1, x2, y2
+
+        except Exception:
+            return None

@@ -13,6 +13,12 @@ from ..models import (
 from ..core.template_manager import TemplateManager
 from ..core.image_processor import ImageProcessor
 from ..core.ocr_engine import OCREngine
+from .ocr_utils import (
+    resolve_ocr_options,
+    resolve_preprocessing_profile,
+    resolve_field_rules,
+    run_field_level_ocr
+)
 from ..core.ai_field_mapper import AIFieldMapper
 
 logger = logging.getLogger(__name__)
@@ -43,6 +49,8 @@ async def analyze_document(
         # If template_id provided, use it; otherwise create temporary template
         template_fields = []
 
+        template_rules: Dict[str, Any] = {}
+
         if request.template_id:
             template_manager = TemplateManager(db)
             template = template_manager.get_template(request.template_id)
@@ -51,6 +59,7 @@ async def analyze_document(
                 raise HTTPException(status_code=404, detail="Şablon bulunamadı")
 
             template_fields = template.target_fields
+            template_rules = template.extraction_rules or {}
         else:
             raise HTTPException(
                 status_code=400,
@@ -63,13 +72,22 @@ async def analyze_document(
 
         # 1. Preprocess document
         image_processor = ImageProcessor(settings.TEMP_DIR)
-        processed_document = image_processor.process_file(document.file_path)
+        global_profile = resolve_preprocessing_profile(template_rules)
+        processed_document = image_processor.process_file(
+            document.file_path,
+            profile=global_profile
+        )
 
         if not processed_document:
             raise HTTPException(
                 status_code=500,
                 detail="Resim işleme hatası"
             )
+
+        ocr_engine = OCREngine(
+            settings.TESSERACT_CMD,
+            settings.TESSERACT_LANG
+        )
 
         # 2. Run OCR only when needed
         if processed_document.text:
@@ -88,11 +106,11 @@ async def analyze_document(
                 'source': 'text-layer'
             }
         else:
-            ocr_engine = OCREngine(
-                settings.TESSERACT_CMD,
-                settings.TESSERACT_LANG
+            global_ocr_options = resolve_ocr_options(template_rules)
+            ocr_result = ocr_engine.extract_text(
+                processed_document.image_path,
+                options=global_ocr_options
             )
-            ocr_result = ocr_engine.extract_text(processed_document.image_path)
             ocr_result['source'] = 'ocr'
 
         if not ocr_result or not ocr_result.get('text'):
@@ -112,6 +130,23 @@ async def analyze_document(
             settings.OPENAI_API_KEY,
             settings.OPENAI_MODEL
         )
+
+        field_rules = resolve_field_rules(template_rules)
+        if (
+            field_rules
+            and processed_document
+            and (processed_document.image_path or processed_document.original_image_path)
+        ):
+            field_results = run_field_level_ocr(
+                image_processor,
+                ocr_engine,
+                processed_document,
+                document.file_path,
+                field_rules
+            )
+
+            if field_results:
+                ocr_result.setdefault('field_results', field_results)
 
         mapping_result = ai_mapper.map_fields(
             ocr_result['text'],
