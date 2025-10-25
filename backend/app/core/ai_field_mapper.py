@@ -4,6 +4,12 @@ import json
 import logging
 from typing import Dict, List, Any, Optional
 
+try:
+    from openai.error import AuthenticationError, OpenAIError
+except ImportError:  # pragma: no cover - fallback for different openai versions
+    AuthenticationError = Exception
+    OpenAIError = Exception
+
 logger = logging.getLogger(__name__)
 
 
@@ -21,6 +27,12 @@ class AIFieldMapper:
         self.api_key = api_key
         self.model = model
         openai.api_key = api_key
+        self._has_valid_api_key = bool(api_key and api_key.strip())
+
+        if not self._has_valid_api_key:
+            logger.error(
+                "OpenAI API anahtarı ayarlanmamış veya boş. AI eşleme işlemi yapılamayacak."
+            )
 
     def map_fields(
         self,
@@ -39,6 +51,12 @@ class AIFieldMapper:
         Returns:
             Dictionary with field mappings and confidence scores
         """
+        if not self._has_valid_api_key:
+            return self._create_empty_mapping(
+                template_fields,
+                "OpenAI API anahtarı ayarlanmamış veya geçersiz."
+            )
+
         try:
             # Build prompt for GPT-4
             prompt = self._build_mapping_prompt(ocr_text, template_fields)
@@ -73,6 +91,15 @@ class AIFieldMapper:
             logger.info(f"AI haritalama tamamlandı: {len(result)} alan")
             return result
 
+        except AuthenticationError as e:
+            logger.error("OpenAI API kimlik doğrulama hatası: %s", str(e))
+            return self._create_empty_mapping(
+                template_fields,
+                "OpenAI API anahtarı doğrulanamadı"
+            )
+        except OpenAIError as e:
+            logger.error("OpenAI API hatası: %s", str(e))
+            return self._create_empty_mapping(template_fields, str(e))
         except Exception as e:
             logger.error(f"AI haritalama hatası: {str(e)}")
             # Return empty mappings with low confidence
