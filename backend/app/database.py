@@ -54,6 +54,7 @@ class TemplateField(Base):
     regex_hint = Column(String(500), nullable=True)
     ocr_psm = Column(String(32), nullable=True)
     ocr_roi = Column(JSON, nullable=True)
+    enabled = Column(Boolean, default=True)
 
     # Relationships
     template = relationship("Template", back_populates="fields")

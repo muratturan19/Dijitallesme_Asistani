@@ -8,7 +8,7 @@ from ..config import settings
 from ..database import get_db, Template, Document
 from ..models import (
     TemplateCreate, TemplateResponse, AnalyzeRequest,
-    SaveTemplateRequest, TestTemplateRequest
+    SaveTemplateRequest, TestTemplateRequest, TemplateFieldsUpdate
 )
 from ..core.template_manager import TemplateManager
 from ..core.image_processor import ImageProcessor
@@ -47,7 +47,8 @@ async def analyze_document(
 
         # Get template (for field definitions)
         # If template_id provided, use it; otherwise create temporary template
-        template_fields = []
+        all_template_fields: List[Dict[str, Any]] = []
+        template_fields: List[Dict[str, Any]] = []
 
         template_rules: Dict[str, Any] = {}
 
@@ -58,7 +59,11 @@ async def analyze_document(
             if not template:
                 raise HTTPException(status_code=404, detail="Şablon bulunamadı")
 
-            template_fields = template.target_fields
+            all_template_fields = template.target_fields or []
+            template_fields = [
+                field for field in all_template_fields
+                if field.get('enabled', True)
+            ]
             template_rules = template.extraction_rules or {}
         else:
             raise HTTPException(
@@ -148,11 +153,17 @@ async def analyze_document(
             if field_results:
                 ocr_result.setdefault('field_results', field_results)
 
-        mapping_result = ai_mapper.map_fields(
-            ocr_result['text'],
-            template_fields,
-            ocr_result
-        )
+        if template_fields:
+            mapping_result = ai_mapper.map_fields(
+                ocr_result['text'],
+                template_fields,
+                ocr_result
+            )
+        else:
+            mapping_result = {
+                'field_mappings': {},
+                'overall_confidence': 0.0
+            }
 
         # Format response
         suggested_mapping = {}
@@ -165,6 +176,18 @@ async def analyze_document(
                 'confidence': confidence,
                 'status': status,
                 'source': field_data.get('source', '')
+            }
+
+        for field in all_template_fields:
+            field_name = field.get('field_name')
+            if not field_name or field_name in suggested_mapping:
+                continue
+
+            suggested_mapping[field_name] = {
+                'value': None,
+                'confidence': 0.0,
+                'status': 'high',
+                'source': ''
             }
 
         # Update document status
@@ -211,7 +234,8 @@ async def save_template(
             request.template_id,
             {
                 'name': request.name,
-                'extraction_rules': request.confirmed_mapping
+                'extraction_rules': request.confirmed_mapping,
+                'target_fields': request.target_fields if request.target_fields is not None else None
             }
         )
 
@@ -230,6 +254,38 @@ async def save_template(
         raise
     except Exception as e:
         logger.error(f"Şablon kaydetme hatası: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/{template_id}/fields", response_model=Dict[str, Any])
+async def update_template_fields(
+    template_id: int,
+    payload: TemplateFieldsUpdate,
+    db: Session = Depends(get_db)
+):
+    """Update template field configuration."""
+    try:
+        template_manager = TemplateManager(db)
+        template = template_manager.update_template(
+            template_id,
+            {'target_fields': payload.target_fields}
+        )
+
+        if not template:
+            raise HTTPException(status_code=404, detail="Şablon bulunamadı")
+
+        logger.info("Şablon alanları güncellendi: %s", template_id)
+
+        return {
+            'template_id': template.id,
+            'field_count': len(payload.target_fields),
+            'message': 'Alan ayarları güncellendi'
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Şablon alan güncelleme hatası: %s", str(e))
         raise HTTPException(status_code=500, detail=str(e))
 
 

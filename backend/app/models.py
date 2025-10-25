@@ -14,6 +14,7 @@ class TemplateFieldCreate(BaseModel):
     regex_hint: Optional[str] = None
     ocr_psm: Optional[str] = None
     ocr_roi: Optional[Any] = None
+    enabled: bool = True
 
 
 class TemplateFieldResponse(TemplateFieldCreate):
@@ -34,6 +35,11 @@ class TemplateUpdate(BaseModel):
     name: Optional[str] = None
     version: Optional[str] = None
     extraction_rules: Optional[Dict[str, Any]] = None
+    target_fields: Optional[List[Dict[str, Any]]] = None
+
+
+class TemplateFieldsUpdate(BaseModel):
+    target_fields: List[Dict[str, Any]]
 
 
 class TemplateResponse(BaseModel):
@@ -129,6 +135,7 @@ class SaveTemplateRequest(BaseModel):
     template_id: int
     name: str
     confirmed_mapping: Dict[str, Any]
+    target_fields: Optional[List[Dict[str, Any]]] = None
 
 
 class TestTemplateRequest(BaseModel):

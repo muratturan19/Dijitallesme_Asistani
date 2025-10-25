@@ -60,7 +60,8 @@ class TemplateManager:
                     'calculation_rule': None,
                     'regex_hint': None,
                     'ocr_psm': None,
-                    'ocr_roi': None
+                    'ocr_roi': None,
+                    'enabled': True
                 }
 
                 fields.append(field)
@@ -120,10 +121,17 @@ class TemplateManager:
             Created Template object
         """
         try:
+            normalized_fields = []
+            for field_data in fields:
+                normalized_fields.append({
+                    **field_data,
+                    'enabled': field_data.get('enabled', True)
+                })
+
             # Create template
             template = Template(
                 name=name,
-                target_fields=fields,
+                target_fields=normalized_fields,
                 extraction_rules=extraction_rules or {},
                 sample_document_path=sample_doc_path
             )
@@ -133,7 +141,7 @@ class TemplateManager:
             self.db.refresh(template)
 
             # Create template fields
-            for field_data in fields:
+            for field_data in normalized_fields:
                 template_field = TemplateField(
                     template_id=template.id,
                     field_name=field_data['field_name'],
@@ -143,7 +151,8 @@ class TemplateManager:
                     calculation_rule=field_data.get('calculation_rule'),
                     regex_hint=field_data.get('regex_hint'),
                     ocr_psm=str(field_data.get('ocr_psm')) if field_data.get('ocr_psm') is not None else None,
-                    ocr_roi=field_data.get('ocr_roi')
+                    ocr_roi=field_data.get('ocr_roi'),
+                    enabled=field_data.get('enabled', True)
                 )
                 self.db.add(template_field)
 
@@ -220,6 +229,36 @@ class TemplateManager:
 
             # Update fields
             for key, value in updates.items():
+                if key == 'target_fields' and isinstance(value, list):
+                    normalized_fields = []
+                    self.db.query(TemplateField).filter(
+                        TemplateField.template_id == template_id
+                    ).delete(synchronize_session=False)
+
+                    for field_data in value:
+                        field_data = {
+                            **field_data,
+                            'enabled': field_data.get('enabled', True)
+                        }
+                        normalized_fields.append(field_data)
+
+                        template_field = TemplateField(
+                            template_id=template.id,
+                            field_name=field_data['field_name'],
+                            data_type=field_data.get('data_type', 'text'),
+                            required=field_data.get('required', False),
+                            calculated=field_data.get('calculated', False),
+                            calculation_rule=field_data.get('calculation_rule'),
+                            regex_hint=field_data.get('regex_hint'),
+                            ocr_psm=str(field_data.get('ocr_psm')) if field_data.get('ocr_psm') is not None else None,
+                            ocr_roi=field_data.get('ocr_roi'),
+                            enabled=field_data.get('enabled', True)
+                        )
+                        self.db.add(template_field)
+
+                    template.target_fields = normalized_fields
+                    continue
+
                 if hasattr(template, key):
                     setattr(template, key, value)
 

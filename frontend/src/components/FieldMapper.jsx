@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { toast } from 'react-toastify';
 import { saveTemplate } from '../api';
 
@@ -6,6 +6,41 @@ const FieldMapper = ({ data, onNext, onBack }) => {
   const [templateName, setTemplateName] = useState('Yeni Şablon');
   const [mappings, setMappings] = useState(data.analysisResult.suggested_mapping);
   const [loading, setLoading] = useState(false);
+  const [fieldConfigs, setFieldConfigs] = useState(() => {
+    if (Array.isArray(data.templateFields) && data.templateFields.length > 0) {
+      return data.templateFields.map(field => ({
+        ...field,
+        enabled: field.enabled !== false,
+      }));
+    }
+
+    return Object.keys(data.analysisResult.suggested_mapping || {}).map(fieldName => ({
+      field_name: fieldName,
+      data_type: 'text',
+      required: false,
+      regex_hint: '',
+      enabled: true,
+    }));
+  });
+
+  useEffect(() => {
+    if (Array.isArray(data.templateFields) && data.templateFields.length > 0) {
+      setFieldConfigs(
+        data.templateFields.map(field => ({
+          ...field,
+          enabled: field.enabled !== false,
+        }))
+      );
+    }
+  }, [data.templateFields]);
+
+  const activeFieldNames = useMemo(() => {
+    return new Set(
+      fieldConfigs
+        .filter(field => field.enabled !== false)
+        .map(field => field.field_name)
+    );
+  }, [fieldConfigs]);
 
   const getStatusColor = (status) => {
     switch (status) {
@@ -49,9 +84,14 @@ const FieldMapper = ({ data, onNext, onBack }) => {
     setLoading(true);
 
     try {
-      await saveTemplate(data.templateId, templateName, mappings);
+      await saveTemplate(data.templateId, templateName, mappings, fieldConfigs);
       toast.success('Şablon kaydedildi!');
-      onNext({ ...data, templateName, confirmedMapping: mappings });
+      onNext({
+        ...data,
+        templateName,
+        confirmedMapping: mappings,
+        templateFields: fieldConfigs,
+      });
     } catch (error) {
       toast.error('Kaydetme hatası: ' + (error.response?.data?.detail || error.message));
     } finally {
@@ -59,7 +99,60 @@ const FieldMapper = ({ data, onNext, onBack }) => {
     }
   };
 
-  const needsReview = Object.values(mappings).some(m => m.status === 'low');
+  const needsReview = Object.entries(mappings).some(
+    ([fieldName, fieldData]) => activeFieldNames.has(fieldName) && fieldData.status === 'low'
+  );
+
+  const handleFieldConfigChange = (fieldName, key, value) => {
+    setFieldConfigs(prev => {
+      const exists = prev.some(field => field.field_name === fieldName);
+
+      if (!exists) {
+        return [
+          ...prev,
+          {
+            field_name: fieldName,
+            data_type: key === 'data_type' ? value : 'text',
+            required: key === 'required' ? value : false,
+            regex_hint: key === 'regex_hint' ? value : '',
+            enabled: key === 'enabled' ? value : true,
+          },
+        ];
+      }
+
+      return prev.map(field =>
+        field.field_name === fieldName
+          ? {
+              ...field,
+              [key]: value,
+            }
+          : field
+      );
+    });
+  };
+
+  useEffect(() => {
+    setFieldConfigs(prev => {
+      const existingNames = new Set(prev.map(field => field.field_name));
+      const additions = Object.keys(mappings || {}).filter(
+        fieldName => !existingNames.has(fieldName)
+      );
+
+      if (additions.length === 0) {
+        return prev;
+      }
+
+      const newEntries = additions.map(fieldName => ({
+        field_name: fieldName,
+        data_type: 'text',
+        required: false,
+        regex_hint: '',
+        enabled: true,
+      }));
+
+      return [...prev, ...newEntries];
+    });
+  }, [mappings]);
 
   return (
     <div className="max-w-6xl mx-auto p-6">
@@ -106,6 +199,7 @@ const FieldMapper = ({ data, onNext, onBack }) => {
             <thead>
               <tr className="border-b">
                 <th className="text-left py-3 px-4">Hedef Alan</th>
+                <th className="text-left py-3 px-4">Alan Ayarları</th>
                 <th className="text-left py-3 px-4">Çıkarılan Değer</th>
                 <th className="text-left py-3 px-4">Güven Skoru</th>
                 <th className="text-left py-3 px-4">Durum</th>
@@ -113,14 +207,89 @@ const FieldMapper = ({ data, onNext, onBack }) => {
             </thead>
             <tbody>
               {Object.entries(mappings).map(([fieldName, fieldData]) => (
-                <tr key={fieldName} className="border-b hover:bg-gray-50">
-                  <td className="py-3 px-4 font-medium">{fieldName}</td>
+                <tr
+                  key={fieldName}
+                  className={`border-b hover:bg-gray-50 ${
+                    activeFieldNames.has(fieldName) ? '' : 'opacity-60'
+                  }`}
+                >
+                  <td className="py-3 px-4 font-medium align-top">{fieldName}</td>
+                  <td className="py-3 px-4 text-sm align-top">
+                    {(() => {
+                      const fieldConfig = fieldConfigs.find(
+                        field => field.field_name === fieldName
+                      ) || {
+                        field_name: fieldName,
+                        data_type: 'text',
+                        required: false,
+                        regex_hint: '',
+                        enabled: true,
+                      };
+                      const isEnabled = fieldConfig.enabled !== false;
+
+                      return (
+                        <div className="flex flex-col gap-3">
+                          <div className="flex flex-wrap items-center gap-4">
+                            <label className="flex items-center gap-2 text-sm">
+                              <input
+                                type="checkbox"
+                                className="rounded"
+                                checked={isEnabled}
+                                onChange={(e) =>
+                                  handleFieldConfigChange(fieldName, 'enabled', e.target.checked)
+                                }
+                              />
+                              <span>Dahil Et</span>
+                            </label>
+                            <div>
+                              <label className="block text-xs text-gray-500 mb-1">Veri Tipi</label>
+                              <select
+                                className="border rounded px-2 py-1 text-sm"
+                                value={fieldConfig.data_type || 'text'}
+                                onChange={(e) =>
+                                  handleFieldConfigChange(fieldName, 'data_type', e.target.value)
+                                }
+                              >
+                                <option value="text">Metin</option>
+                                <option value="number">Sayı</option>
+                                <option value="date">Tarih</option>
+                              </select>
+                            </div>
+                            <label className="flex items-center gap-2 text-sm">
+                              <input
+                                type="checkbox"
+                                className="rounded"
+                                checked={fieldConfig.required || false}
+                                onChange={(e) =>
+                                  handleFieldConfigChange(fieldName, 'required', e.target.checked)
+                                }
+                              />
+                              <span>Gerekli</span>
+                            </label>
+                          </div>
+                          <div>
+                            <label className="block text-xs text-gray-500 mb-1">Regex İpucu</label>
+                            <input
+                              type="text"
+                              className="input text-sm"
+                              value={fieldConfig.regex_hint || ''}
+                              onChange={(e) =>
+                                handleFieldConfigChange(fieldName, 'regex_hint', e.target.value)
+                              }
+                              placeholder="Örn: ^[0-9]{11}$"
+                            />
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </td>
                   <td className="py-3 px-4">
                     <input
                       type="text"
                       value={fieldData.value || ''}
                       onChange={(e) => handleValueChange(fieldName, e.target.value)}
                       className="input text-sm"
+                      disabled={!activeFieldNames.has(fieldName)}
                       placeholder="Değer giriniz"
                     />
                     {fieldData.source && (
