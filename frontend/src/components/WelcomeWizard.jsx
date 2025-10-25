@@ -96,6 +96,7 @@ const WelcomeWizard = ({ onComplete }) => {
     accept: {
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
       'application/vnd.ms-excel': ['.xls'],
+      'text/csv': ['.csv'],
     },
     maxFiles: 1,
   });
@@ -180,7 +181,7 @@ const WelcomeWizard = ({ onComplete }) => {
             ) : (
               <div>
                 <p className="text-gray-600">Excel dosyasını buraya sürükleyin veya tıklayın</p>
-                <p className="text-sm text-gray-400 mt-2">XLSX, XLS</p>
+                <p className="text-sm text-gray-400 mt-2">XLSX, XLS, CSV</p>
               </div>
             )}
           </div>
