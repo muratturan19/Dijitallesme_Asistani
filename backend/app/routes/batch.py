@@ -51,16 +51,36 @@ async def process_document_task(
         document.status = "processing"
         db.commit()
 
-        # Process image
+        # Process document
         image_processor = ImageProcessor(settings.TEMP_DIR)
-        preprocessed_path = image_processor.process_file(document.file_path)
+        processed_document = image_processor.process_file(document.file_path)
 
-        if not preprocessed_path:
+        if not processed_document:
             raise Exception("Resim işleme hatası")
 
-        # Run OCR
-        ocr_engine = OCREngine(settings.TESSERACT_CMD, settings.TESSERACT_LANG)
-        ocr_result = ocr_engine.extract_text(preprocessed_path)
+        # Run OCR if required
+        if processed_document.text:
+            logger.info(
+                "Toplu iş belgesi metin katmanından işlendi, OCR atlandı: %s",
+                document.id
+            )
+            cleaned_text = processed_document.text.strip()
+            word_count = len(cleaned_text.split()) if cleaned_text else 0
+            ocr_result = {
+                'text': cleaned_text,
+                'words_with_bbox': [],
+                'confidence_scores': {},
+                'average_confidence': 1.0,
+                'word_count': word_count,
+                'source': 'text-layer'
+            }
+        else:
+            ocr_engine = OCREngine(
+                settings.TESSERACT_CMD,
+                settings.TESSERACT_LANG
+            )
+            ocr_result = ocr_engine.extract_text(processed_document.image_path)
+            ocr_result['source'] = 'ocr'
 
         if not ocr_result or not ocr_result.get('text'):
             raise Exception("OCR hatası")
@@ -95,7 +115,11 @@ async def process_document_task(
         document.status = "completed"
         db.commit()
 
-        logger.info(f"Belge işlendi: {document_id}")
+        logger.info(
+            "Belge işlendi: %s (kaynak: %s)",
+            document_id,
+            ocr_result.get('source', 'ocr')
+        )
 
     except Exception as e:
         logger.error(f"Belge işleme hatası {document_id}: {str(e)}")

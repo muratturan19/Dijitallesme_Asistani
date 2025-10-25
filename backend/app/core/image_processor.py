@@ -6,6 +6,16 @@ import fitz  # PyMuPDF
 from pathlib import Path
 import logging
 from typing import Optional
+from dataclasses import dataclass
+
+
+@dataclass
+class ProcessedDocument:
+    """Container for processed document output."""
+
+    text: Optional[str]
+    image_path: Optional[str]
+    source: str
 
 logger = logging.getLogger(__name__)
 
@@ -17,21 +27,41 @@ class ImageProcessor:
         self.temp_dir = temp_dir
         self.temp_dir.mkdir(parents=True, exist_ok=True)
 
-    def process_file(self, file_path: str) -> Optional[str]:
+    def process_file(self, file_path: str) -> Optional[ProcessedDocument]:
         """
-        Process uploaded file (PDF or image) and return preprocessed image path
+        Process uploaded file (PDF or image) and return either extracted text
+        from the PDF text layer or the path to a preprocessed image ready for
+        OCR.
 
         Args:
             file_path: Path to the uploaded file
 
         Returns:
-            Path to preprocessed image or None if processing fails
+            ProcessedDocument containing either text content or image path,
+            or None if processing fails
         """
         try:
             file_path = Path(file_path)
 
             # Check if PDF or image
             if file_path.suffix.lower() == '.pdf':
+                text_content = self._extract_pdf_text(file_path)
+
+                if text_content:
+                    logger.info(
+                        "PDF metin katmanı bulundu, OCR atlanıyor: %s",
+                        file_path
+                    )
+                    return ProcessedDocument(
+                        text=text_content,
+                        image_path=None,
+                        source='text-layer'
+                    )
+
+                logger.info(
+                    "PDF metin katmanı bulunamadı, OCR için dönüştürülüyor: %s",
+                    file_path
+                )
                 image_path = self._pdf_to_image(file_path)
             else:
                 image_path = str(file_path)
@@ -39,11 +69,44 @@ class ImageProcessor:
             # Preprocess the image
             preprocessed_path = self._preprocess_image(image_path)
 
-            return preprocessed_path
+            return ProcessedDocument(
+                text=None,
+                image_path=preprocessed_path,
+                source='ocr'
+            )
 
         except Exception as e:
             logger.error(f"Dosya işleme hatası {file_path}: {str(e)}")
             return None
+
+    def _extract_pdf_text(self, pdf_path: Path) -> str:
+        """Return concatenated text-layer content for the PDF if available."""
+        text_parts = []
+
+        try:
+            with fitz.open(str(pdf_path)) as doc:
+                for page_num, page in enumerate(doc):
+                    page_text = page.get_text("text") or ""
+
+                    if page_text.strip():
+                        logger.debug(
+                            "PDF sayfası metin bulundu: %s (sayfa %d)",
+                            pdf_path,
+                            page_num + 1
+                        )
+
+                    text_parts.append(page_text)
+
+        except Exception as e:
+            logger.warning(f"PDF metin katmanı okunamadı {pdf_path}: {str(e)}")
+            return ""
+
+        text_content = "\n".join(part for part in text_parts if part).strip()
+
+        if not text_content:
+            logger.info("PDF metin katmanı boş: %s", pdf_path)
+
+        return text_content
 
     def _pdf_to_image(self, pdf_path: Path) -> str:
         """

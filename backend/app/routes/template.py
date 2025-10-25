@@ -61,22 +61,39 @@ async def analyze_document(
         document.status = "processing"
         db.commit()
 
-        # 1. Preprocess image
+        # 1. Preprocess document
         image_processor = ImageProcessor(settings.TEMP_DIR)
-        preprocessed_path = image_processor.process_file(document.file_path)
+        processed_document = image_processor.process_file(document.file_path)
 
-        if not preprocessed_path:
+        if not processed_document:
             raise HTTPException(
                 status_code=500,
                 detail="Resim işleme hatası"
             )
 
-        # 2. Run OCR
-        ocr_engine = OCREngine(
-            settings.TESSERACT_CMD,
-            settings.TESSERACT_LANG
-        )
-        ocr_result = ocr_engine.extract_text(preprocessed_path)
+        # 2. Run OCR only when needed
+        if processed_document.text:
+            logger.info(
+                "Belge metin katmanından işlendi, OCR atlandı: %s",
+                document.id
+            )
+            cleaned_text = processed_document.text.strip()
+            word_count = len(cleaned_text.split()) if cleaned_text else 0
+            ocr_result = {
+                'text': cleaned_text,
+                'words_with_bbox': [],
+                'confidence_scores': {},
+                'average_confidence': 1.0,
+                'word_count': word_count,
+                'source': 'text-layer'
+            }
+        else:
+            ocr_engine = OCREngine(
+                settings.TESSERACT_CMD,
+                settings.TESSERACT_LANG
+            )
+            ocr_result = ocr_engine.extract_text(processed_document.image_path)
+            ocr_result['source'] = 'ocr'
 
         if not ocr_result or not ocr_result.get('text'):
             raise HTTPException(
@@ -126,7 +143,11 @@ async def analyze_document(
             'ocr_text': ocr_result['text'],
             'overall_confidence': mapping_result['overall_confidence'],
             'word_count': ocr_result.get('word_count', 0),
-            'message': 'Analiz başarıyla tamamlandı'
+            'extraction_source': ocr_result.get('source', 'ocr'),
+            'message': (
+                'Analiz başarıyla tamamlandı - kaynak: '
+                f"{ocr_result.get('source', 'ocr')}"
+            )
         }
 
     except HTTPException:
