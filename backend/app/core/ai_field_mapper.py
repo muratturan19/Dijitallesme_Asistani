@@ -55,7 +55,8 @@ class AIFieldMapper:
         self,
         ocr_text: str,
         template_fields: List[Dict[str, Any]],
-        ocr_data: Optional[Dict[str, Any]] = None
+        ocr_data: Optional[Dict[str, Any]] = None,
+        field_hints: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Map OCR extracted text to template fields using AI
@@ -64,6 +65,7 @@ class AIFieldMapper:
             ocr_text: Full extracted text from OCR
             template_fields: List of target field definitions
             ocr_data: Optional detailed OCR data with bounding boxes
+            field_hints: Optional overrides such as regex/type/fallback hints
 
         Returns:
             Dictionary with field mappings and confidence scores
@@ -76,11 +78,24 @@ class AIFieldMapper:
 
         try:
             # Build prompt for GPT-4
-            field_evidence = self._pre_detect_fields(ocr_text, template_fields)
-            prompt = self._build_mapping_prompt(
+            hints = field_hints or {}
+            field_context = [
+                self._build_field_context(
+                    field,
+                    hints.get(field.get('field_name')) if isinstance(field, dict) else None
+                )
+                for field in template_fields
+            ]
+            field_evidence = self._pre_detect_fields(
                 ocr_text,
                 template_fields,
-                field_evidence=field_evidence if field_evidence else None
+                hints if hints else None
+            )
+            prompt = self._build_mapping_prompt(
+                ocr_text,
+                field_context,
+                field_evidence=field_evidence if field_evidence else None,
+                field_hints=self._summarize_field_hints(hints)
             )
 
             # Call OpenAI API (supports both legacy and modern clients)
@@ -191,7 +206,17 @@ class AIFieldMapper:
             "\nTALİMAT SETİ:\n" + instruction_block,
             "\nALAN METAVERİSİ:\n" + json.dumps(
                 field_context, ensure_ascii=False, indent=2
-            ),
+            )
+        ]
+
+        if field_hints:
+            prompt_sections.append(
+                "\nALAN KURALLARI:\n" + json.dumps(
+                    field_hints, ensure_ascii=False, indent=2
+                )
+            )
+
+        prompt_sections.extend([
             "\nÇIKTI ŞEMASI:\n" + json.dumps(
                 output_schema, ensure_ascii=False, indent=2
             ),
@@ -200,7 +225,7 @@ class AIFieldMapper:
                 "\nYANIT FORMATIN:\n"
                 "Yanıtını yalnızca geçerli JSON ile ver."
             )
-        ]
+        ])
 
         if field_evidence:
             prompt_sections.append(
@@ -211,7 +236,11 @@ class AIFieldMapper:
 
         return "\n".join(prompt_sections)
 
-    def _build_field_context(self, field: Dict[str, Any]) -> Dict[str, Any]:
+    def _build_field_context(
+        self,
+        field: Dict[str, Any],
+        hints: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
         """Normalize field metadata for prompting."""
 
         data_type = field.get('data_type', 'text')
@@ -244,6 +273,34 @@ class AIFieldMapper:
 
         if field.get('calculated'):
             context['calculated'] = True
+
+        if hints:
+            type_hint = hints.get('type_hint')
+            if type_hint and 'type_hint' not in context:
+                context['type_hint'] = type_hint
+
+            fallback = hints.get('fallback_value')
+            if fallback is not None:
+                context['fallback_value'] = fallback
+
+            regex_patterns = hints.get('regex_patterns')
+            if regex_patterns:
+                context['regex_overrides'] = regex_patterns
+
+            roi_hint = hints.get('roi')
+            if roi_hint is not None and 'ocr_roi' not in context:
+                context['ocr_roi'] = roi_hint
+
+            ocr_hint = hints.get('ocr')
+            if ocr_hint:
+                context['ocr_overrides'] = ocr_hint
+
+            preprocessing_hint = hints.get('preprocessing')
+            if preprocessing_hint:
+                context['preprocessing'] = preprocessing_hint
+
+            if hints.get('metadata'):
+                context['metadata'] = hints['metadata']
 
         return context
 
@@ -283,6 +340,62 @@ class AIFieldMapper:
         """Normalize tokens for fuzzy OCR comparisons."""
 
         return re.sub(r'[^0-9a-zA-ZçğıöşüÇĞİÖŞÜ]', '', token).lower()
+
+    def _regex_flag_value(self, flags: Optional[Any]) -> int:
+        """Convert flag descriptors into a Python regex flag bitmask."""
+
+        if flags is None:
+            return re.IGNORECASE
+
+        if isinstance(flags, int):
+            return flags
+
+        flag_value = 0
+        candidates: List[Any]
+
+        if isinstance(flags, str):
+            candidates = [flags]
+        elif isinstance(flags, (list, tuple, set)):
+            candidates = list(flags)
+        else:
+            return re.IGNORECASE
+
+        for candidate in candidates:
+            if isinstance(candidate, int):
+                flag_value |= candidate
+                continue
+            if not isinstance(candidate, str):
+                continue
+            attr = getattr(re, candidate.upper(), None)
+            if isinstance(attr, int):
+                flag_value |= attr
+
+        return flag_value or re.IGNORECASE
+
+    def _summarize_field_hints(self, hints: Dict[str, Any]) -> Dict[str, Any]:
+        """Return a sanitized view of field hints for prompting."""
+
+        summary: Dict[str, Any] = {}
+
+        for field_name, data in hints.items():
+            if not isinstance(field_name, str) or not isinstance(data, dict):
+                continue
+
+            entry: Dict[str, Any] = {}
+            for key in ('type_hint', 'fallback_value', 'regex_patterns', 'ocr', 'preprocessing', 'roi', 'enabled'):
+                value = data.get(key)
+                if value in (None, {}, [], ''):
+                    continue
+                entry[key] = value
+
+            metadata = data.get('metadata')
+            if isinstance(metadata, dict) and metadata:
+                entry['metadata'] = metadata
+
+            if entry:
+                summary[field_name] = entry
+
+        return summary
 
     def _build_word_confidence_map(self, ocr_data: Dict[str, Any]) -> Dict[str, List[float]]:
         """Aggregate OCR confidences per normalized token."""
@@ -364,7 +477,8 @@ class AIFieldMapper:
     def _pre_detect_fields(
         self,
         ocr_text: str,
-        template_fields: List[Dict[str, Any]]
+        template_fields: List[Dict[str, Any]],
+        field_hints: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """Perform lightweight detections (regex + heuristics) to guide the LLM."""
 
@@ -372,42 +486,85 @@ class AIFieldMapper:
             return {}
 
         evidence: Dict[str, Any] = {}
+        hints = field_hints or {}
 
         # 1) Respect user-provided regex hints per field.
         for field in template_fields:
             field_name = field.get('field_name')
+            if not field_name:
+                continue
+
+            pattern_candidates: List[Dict[str, Any]] = []
+
             pattern_text = field.get('regex_hint')
+            if pattern_text:
+                pattern_candidates.append({
+                    'pattern': pattern_text,
+                    'flags': None,
+                    'source': 'template'
+                })
 
-            if not field_name or not pattern_text:
+            hint_data = hints.get(field_name)
+            if isinstance(hint_data, dict):
+                hint_patterns = hint_data.get('regex_patterns') or []
+                if isinstance(hint_patterns, dict):
+                    hint_patterns = [hint_patterns]
+                for hint_pattern in hint_patterns:
+                    if not isinstance(hint_pattern, dict):
+                        continue
+                    pattern_candidates.append({
+                        'pattern': hint_pattern.get('pattern'),
+                        'flags': hint_pattern.get('flags'),
+                        'source': hint_pattern.get('source', 'hint')
+                    })
+
+            if not pattern_candidates:
                 continue
 
-            try:
-                pattern = re.compile(pattern_text, re.IGNORECASE)
-            except re.error as exc:
-                logger.warning(
-                    "Geçersiz regex ipucu (%s) alanı %s için: %s",
-                    pattern_text,
-                    field_name,
-                    exc
-                )
+            pattern_evidence: List[Dict[str, Any]] = []
+            for candidate in pattern_candidates:
+                pattern_str = candidate.get('pattern')
+                if not pattern_str:
+                    continue
+                try:
+                    compiled = re.compile(
+                        pattern_str,
+                        self._regex_flag_value(candidate.get('flags'))
+                    )
+                except re.error as exc:
+                    logger.warning(
+                        "Geçersiz regex (%s) alanı %s için: %s",
+                        pattern_str,
+                        field_name,
+                        exc
+                    )
+                    continue
+
+                matches = compiled.findall(ocr_text)
+                if not matches:
+                    continue
+
+                normalized_matches: List[str] = []
+                for match in matches:
+                    if isinstance(match, tuple):
+                        normalized_matches.append(" ".join(part for part in match if part))
+                    else:
+                        normalized_matches.append(str(match))
+
+                if normalized_matches:
+                    pattern_evidence.append({
+                        'pattern': compiled.pattern,
+                        'source': candidate.get('source', 'regex'),
+                        'matches': normalized_matches
+                    })
+
+            if not pattern_evidence:
                 continue
 
-            matches = pattern.findall(ocr_text)
-            if not matches:
-                continue
-
-            normalized_matches: List[str] = []
-            for match in matches:
-                if isinstance(match, tuple):
-                    normalized_matches.append(" ".join(part for part in match if part))
-                else:
-                    normalized_matches.append(str(match))
-
-            if normalized_matches:
-                evidence[field_name] = {
-                    'pattern': pattern.pattern,
-                    'matches': normalized_matches
-                }
+            if len(pattern_evidence) == 1:
+                evidence[field_name] = pattern_evidence[0]
+            else:
+                evidence[field_name] = {'patterns': pattern_evidence}
 
         # 2) Apply general heuristics for commonly formatted data types.
         date_matches = re.findall(r"\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b", ocr_text)

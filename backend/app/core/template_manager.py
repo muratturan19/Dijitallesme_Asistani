@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 import openpyxl
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 from pathlib import Path
 from sqlalchemy.orm import Session
 from ..database import Template, TemplateField
+from ..models import TemplateExtractionRules
 
 logger = logging.getLogger(__name__)
 
@@ -101,12 +102,26 @@ class TemplateManager:
         # Default to text
         return 'text'
 
+    def _normalize_rules(
+        self,
+        extraction_rules: Optional[Union[TemplateExtractionRules, Dict[str, Any]]]
+    ) -> Dict[str, Any]:
+        if isinstance(extraction_rules, TemplateExtractionRules):
+            return extraction_rules.dict()
+        if isinstance(extraction_rules, dict):
+            return {
+                key: value
+                for key, value in extraction_rules.items()
+                if value is not None
+            }
+        return {}
+
     def create_template(
         self,
         name: str,
         fields: List[Dict[str, Any]],
         sample_doc_path: Optional[str] = None,
-        extraction_rules: Optional[Dict[str, Any]] = None
+        extraction_rules: Optional[Union[TemplateExtractionRules, Dict[str, Any]]] = None
     ) -> Template:
         """
         Create new template in database
@@ -132,7 +147,7 @@ class TemplateManager:
             template = Template(
                 name=name,
                 target_fields=normalized_fields,
-                extraction_rules=extraction_rules or {},
+                extraction_rules=self._normalize_rules(extraction_rules),
                 sample_document_path=sample_doc_path
             )
 
@@ -259,6 +274,10 @@ class TemplateManager:
                     template.target_fields = normalized_fields
                     continue
 
+                if key == 'extraction_rules':
+                    setattr(template, key, self._normalize_rules(value))
+                    continue
+
                 if hasattr(template, key):
                     setattr(template, key, value)
 
@@ -322,7 +341,7 @@ class TemplateManager:
             if not template:
                 return False
 
-            template.extraction_rules = extraction_rules
+            template.extraction_rules = self._normalize_rules(extraction_rules)
             self.db.commit()
 
             logger.info(f"Çıkarma kuralları kaydedildi: {template_id}")
