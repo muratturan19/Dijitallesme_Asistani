@@ -57,7 +57,10 @@ class TemplateManager:
                     'data_type': data_type,
                     'required': False,
                     'calculated': False,
-                    'calculation_rule': None
+                    'calculation_rule': None,
+                    'regex_hint': None,
+                    'ocr_psm': None,
+                    'ocr_roi': None
                 }
 
                 fields.append(field)
@@ -137,7 +140,10 @@ class TemplateManager:
                     data_type=field_data['data_type'],
                     required=field_data.get('required', False),
                     calculated=field_data.get('calculated', False),
-                    calculation_rule=field_data.get('calculation_rule')
+                    calculation_rule=field_data.get('calculation_rule'),
+                    regex_hint=field_data.get('regex_hint'),
+                    ocr_psm=str(field_data.get('ocr_psm')) if field_data.get('ocr_psm') is not None else None,
+                    ocr_roi=field_data.get('ocr_roi')
                 )
                 self.db.add(template_field)
 

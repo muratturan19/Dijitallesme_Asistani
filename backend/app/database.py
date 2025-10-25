@@ -51,6 +51,9 @@ class TemplateField(Base):
     required = Column(Boolean, default=False)
     calculated = Column(Boolean, default=False)
     calculation_rule = Column(String(500), nullable=True)
+    regex_hint = Column(String(500), nullable=True)
+    ocr_psm = Column(String(32), nullable=True)
+    ocr_roi = Column(JSON, nullable=True)
 
     # Relationships
     template = relationship("Template", back_populates="fields")
