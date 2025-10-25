@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+sqlalchemy
+python-multipart
+pillow
+opencv-python
+pytesseract
+pymupdf
+openpyxl
+openai
+python-dotenv
+aiofiles
