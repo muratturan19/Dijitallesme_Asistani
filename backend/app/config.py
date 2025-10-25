@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import os
+import shutil
 from dotenv import load_dotenv
 from pathlib import Path
 
@@ -19,6 +20,7 @@ class Settings:
 
     # Tesseract Configuration
     TESSERACT_CMD: str = os.getenv("TESSERACT_CMD", "tesseract")
+    TESSDATA_PREFIX: str = os.getenv("TESSDATA_PREFIX", "")
     TESSERACT_LANG: str = "tur+eng"  # Turkish + English
 
     # File Upload Configuration
@@ -60,7 +62,14 @@ def validate_config():
     if not settings.OPENAI_API_KEY:
         print("⚠️  UYARI: OPENAI_API_KEY ayarlanmamış. AI özellikleri çalışmayacak.")
 
-    if not os.path.exists(settings.TESSERACT_CMD.split()[0]) and settings.TESSERACT_CMD != "tesseract":
+    tesseract_cmd = settings.TESSERACT_CMD.strip().strip('"')
+    cmd_path = Path(tesseract_cmd)
+    if cmd_path.is_file():
+        exists = cmd_path.exists()
+    else:
+        exists = shutil.which(tesseract_cmd) is not None
+
+    if not exists and tesseract_cmd not in {"", "tesseract"}:
         print(f"⚠️  UYARI: Tesseract bulunamadı: {settings.TESSERACT_CMD}")
         print("   Tesseract'ı yükleyin: https://github.com/tesseract-ocr/tesseract")
 
