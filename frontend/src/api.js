@@ -65,11 +65,20 @@ export const analyzeDocument = async (documentId, templateId) => {
   return response.data;
 };
 
-export const saveTemplate = async (templateId, name, confirmedMapping) => {
+export const saveTemplate = async (templateId, name, confirmedMapping, targetFields) => {
   const response = await api.post('/api/template/save', {
     template_id: templateId,
     name,
     confirmed_mapping: confirmedMapping,
+    target_fields: targetFields,
+  });
+
+  return response.data;
+};
+
+export const updateTemplateFields = async (templateId, targetFields) => {
+  const response = await api.put(`/api/template/${templateId}/fields`, {
+    target_fields: targetFields,
   });
 
   return response.data;

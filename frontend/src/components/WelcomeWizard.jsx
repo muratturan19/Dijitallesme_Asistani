@@ -1,7 +1,13 @@
 import React, { useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { toast } from 'react-toastify';
-import { uploadSampleDocument, uploadTemplateFile, analyzeDocument, createTemplate } from '../api';
+import {
+  uploadSampleDocument,
+  uploadTemplateFile,
+  analyzeDocument,
+  createTemplate,
+  updateTemplateFields,
+} from '../api';
 
 const WelcomeWizard = ({ onComplete }) => {
   const [step, setStep] = useState(1);
@@ -11,6 +17,21 @@ const WelcomeWizard = ({ onComplete }) => {
   const [templateId, setTemplateId] = useState(null);
   const [templateFields, setTemplateFields] = useState([]);
   const [loading, setLoading] = useState(false);
+
+  const hasEnabledFields = templateFields.some(field => field.enabled !== false);
+
+  const updateTemplateField = (index, updates) => {
+    setTemplateFields(prev =>
+      prev.map((field, idx) =>
+        idx === index
+          ? {
+              ...field,
+              ...updates,
+            }
+          : field
+      )
+    );
+  };
 
   // Step 1: Upload sample document
   const onDropSample = async (acceptedFiles) => {
@@ -52,7 +73,12 @@ const WelcomeWizard = ({ onComplete }) => {
 
     try {
       const result = await uploadTemplateFile(file);
-      setTemplateFields(result.fields);
+      setTemplateFields(
+        result.fields.map(field => ({
+          ...field,
+          enabled: field.enabled !== false,
+        }))
+      );
 
       // Create template in database
       const template = await createTemplate('Yeni Şablon', result.fields, {});
@@ -88,6 +114,28 @@ const WelcomeWizard = ({ onComplete }) => {
       });
     } catch (error) {
       toast.error('Analiz hatası: ' + (error.response?.data?.detail || error.message));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handlePrepareAnalysis = async () => {
+    if (!templateId) {
+      toast.error('Şablon oluşturulamadı');
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      if (templateFields.length > 0) {
+        await updateTemplateFields(templateId, templateFields);
+      }
+
+      toast.success('Alan ayarları kaydedildi');
+      setStep(3);
+    } catch (error) {
+      toast.error('Alan ayarları kaydedilemedi: ' + (error.response?.data?.detail || error.message));
     } finally {
       setLoading(false);
     }
@@ -214,31 +262,110 @@ const WelcomeWizard = ({ onComplete }) => {
           </div>
 
           {templateFields.length > 0 && (
-            <div className="mt-4 p-4 bg-gray-50 rounded-lg">
-              <h3 className="font-medium mb-2">Bulunan Alanlar:</h3>
-              <div className="flex flex-wrap gap-2">
-                {templateFields.map((field, idx) => (
-                  <span key={idx} className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm">
-                    {field.field_name}
-                  </span>
-                ))}
+            <div className="mt-4">
+              <h3 className="font-medium mb-2">Bulunan Alanlar</h3>
+              <div className="overflow-x-auto border border-gray-200 rounded-lg">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Dahil
+                      </th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Alan Adı
+                      </th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Veri Tipi
+                      </th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Gerekli
+                      </th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Regex İpucu
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200 text-sm">
+                    {templateFields.map((field, index) => (
+                      <tr key={field.field_name} className={!field.enabled ? 'opacity-60' : ''}>
+                        <td className="px-4 py-2 align-middle">
+                          <input
+                            type="checkbox"
+                            className="rounded"
+                            checked={field.enabled !== false}
+                            onChange={(e) =>
+                              updateTemplateField(index, { enabled: e.target.checked })
+                            }
+                          />
+                        </td>
+                        <td className="px-4 py-2 align-middle font-medium text-gray-700">
+                          {field.field_name}
+                        </td>
+                        <td className="px-4 py-2 align-middle">
+                          <select
+                            className="border rounded px-2 py-1 w-full"
+                            value={field.data_type || 'text'}
+                            onChange={(e) =>
+                              updateTemplateField(index, { data_type: e.target.value })
+                            }
+                          >
+                            <option value="text">Metin</option>
+                            <option value="number">Sayı</option>
+                            <option value="date">Tarih</option>
+                          </select>
+                        </td>
+                        <td className="px-4 py-2 align-middle">
+                          <input
+                            type="checkbox"
+                            className="rounded"
+                            checked={field.required || false}
+                            onChange={(e) =>
+                              updateTemplateField(index, { required: e.target.checked })
+                            }
+                          />
+                        </td>
+                        <td className="px-4 py-2 align-middle">
+                          <input
+                            type="text"
+                            className="border rounded px-2 py-1 w-full"
+                            value={field.regex_hint || ''}
+                            onChange={(e) =>
+                              updateTemplateField(index, { regex_hint: e.target.value })
+                            }
+                            placeholder="Örn: ^[0-9]{11}$"
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
+              <p className="text-xs text-gray-500 mt-2">
+                Analize sadece işaretli alanlar dahil edilir.
+              </p>
+              {!hasEnabledFields && (
+                <p className="text-sm text-red-600 mt-2">
+                  En az bir alan seçmeden devam edemezsiniz.
+                </p>
+              )}
             </div>
           )}
 
           <div className="flex gap-3 mt-4">
             <button
               onClick={() => setStep(1)}
-              className="flex-1 bg-gray-200 text-gray-700 py-3 rounded-lg font-medium hover:bg-gray-300 transition-colors"
+              className="flex-1 bg-gray-200 text-gray-700 py-3 rounded-lg font-medium hover:bg-gray-300 transition-colors disabled:bg-gray-300 disabled:text-gray-500"
+              disabled={loading}
             >
               Geri
             </button>
             {templateFile && templateId && (
               <button
-                onClick={() => setStep(3)}
-                className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition-colors"
+                onClick={handlePrepareAnalysis}
+                className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:bg-gray-400"
+                disabled={loading || !hasEnabledFields}
               >
-                Devam Et
+                {loading ? 'Kaydediliyor...' : 'Devam Et'}
               </button>
             )}
           </div>
@@ -279,7 +406,7 @@ const WelcomeWizard = ({ onComplete }) => {
             <button
               onClick={handleAnalyze}
               className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:bg-gray-400"
-              disabled={loading}
+              disabled={loading || !hasEnabledFields}
             >
               {loading ? (
                 <span className="flex items-center justify-center">
@@ -294,6 +421,11 @@ const WelcomeWizard = ({ onComplete }) => {
               )}
             </button>
           </div>
+          {!hasEnabledFields && (
+            <p className="text-sm text-red-600 mt-3">
+              Analizi başlatmak için en az bir alan seçmelisiniz.
+            </p>
+          )}
         </div>
       )}
 
