@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from sqlalchemy.orm import Session
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import logging
 
 from ..config import settings
@@ -14,9 +14,7 @@ from ..core.template_manager import TemplateManager
 from ..core.image_processor import ImageProcessor
 from ..core.ocr_engine import OCREngine
 from .ocr_utils import (
-    resolve_ocr_options,
-    resolve_preprocessing_profile,
-    resolve_field_rules,
+    build_runtime_configuration,
     run_field_level_ocr
 )
 from ..core.ai_field_mapper import AIFieldMapper
@@ -50,7 +48,7 @@ async def analyze_document(
         all_template_fields: List[Dict[str, Any]] = []
         template_fields: List[Dict[str, Any]] = []
 
-        template_rules: Dict[str, Any] = {}
+        runtime_config: Optional[Dict[str, Any]] = None
 
         if request.template_id:
             template_manager = TemplateManager(db)
@@ -64,7 +62,10 @@ async def analyze_document(
                 field for field in all_template_fields
                 if field.get('enabled', True)
             ]
-            template_rules = template.extraction_rules or {}
+            runtime_config = build_runtime_configuration(
+                template.extraction_rules,
+                settings.TESSERACT_LANG
+            )
         else:
             raise HTTPException(
                 status_code=400,
@@ -75,9 +76,16 @@ async def analyze_document(
         document.status = "processing"
         db.commit()
 
+        runtime_config = runtime_config or build_runtime_configuration({}, settings.TESSERACT_LANG)
+        global_profile = runtime_config['preprocessing_profile']
+        global_ocr_options = runtime_config['ocr_options']
+        field_rules = runtime_config['field_rules']
+        field_hints = runtime_config['field_hints']
+        applied_rules = runtime_config['summary']
+        rules_obj = runtime_config['rules']
+
         # 1. Preprocess document
         image_processor = ImageProcessor(settings.TEMP_DIR)
-        global_profile = resolve_preprocessing_profile(template_rules)
         processed_document = image_processor.process_file(
             document.file_path,
             profile=global_profile
@@ -89,9 +97,10 @@ async def analyze_document(
                 detail="Resim işleme hatası"
             )
 
+        ocr_cmd = rules_obj.ocr.tesseract_cmd if getattr(rules_obj, 'ocr', None) else None
         ocr_engine = OCREngine(
-            settings.TESSERACT_CMD,
-            settings.TESSERACT_LANG
+            ocr_cmd or settings.TESSERACT_CMD,
+            runtime_config['language']
         )
 
         # 2. Run OCR only when needed
@@ -111,7 +120,6 @@ async def analyze_document(
                 'source': 'text-layer'
             }
         else:
-            global_ocr_options = resolve_ocr_options(template_rules)
             ocr_result = ocr_engine.extract_text(
                 processed_document.image_path,
                 options=global_ocr_options
@@ -136,7 +144,6 @@ async def analyze_document(
             settings.OPENAI_MODEL
         )
 
-        field_rules = resolve_field_rules(template_rules)
         if (
             field_rules
             and processed_document
@@ -157,7 +164,8 @@ async def analyze_document(
             mapping_result = ai_mapper.map_fields(
                 ocr_result['text'],
                 template_fields,
-                ocr_result
+                ocr_result,
+                field_hints=field_hints
             )
         else:
             mapping_result = {
@@ -202,6 +210,7 @@ async def analyze_document(
             'overall_confidence': mapping_result['overall_confidence'],
             'word_count': ocr_result.get('word_count', 0),
             'extraction_source': ocr_result.get('source', 'ocr'),
+            'applied_rules': applied_rules,
             'message': (
                 'Analiz başarıyla tamamlandı - kaynak: '
                 f"{ocr_result.get('source', 'ocr')}"
@@ -234,7 +243,7 @@ async def save_template(
             request.template_id,
             {
                 'name': request.name,
-                'extraction_rules': request.confirmed_mapping,
+                'extraction_rules': request.confirmed_rules,
                 'target_fields': request.target_fields if request.target_fields is not None else None
             }
         )

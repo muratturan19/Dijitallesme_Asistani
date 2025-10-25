@@ -1,10 +1,19 @@
 # -*- coding: utf-8 -*-
 """Shared helpers for applying template OCR overrides."""
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 from ..core.image_processor import ImageProcessor, ProcessedDocument
 from ..core.ocr_engine import OCREngine
+from ..models import TemplateExtractionRules
+
+
+def _rules_to_dict(
+    config: Optional[Union[TemplateExtractionRules, Dict[str, Any]]]
+) -> Optional[Dict[str, Any]]:
+    if isinstance(config, TemplateExtractionRules):
+        return config.dict()
+    return config
 
 
 
@@ -25,9 +34,12 @@ def resolve_nested_dict(
     return None
 
 
-def resolve_ocr_options(config: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+def resolve_ocr_options(
+    config: Optional[Union[TemplateExtractionRules, Dict[str, Any]]]
+) -> Optional[Dict[str, Any]]:
     """Extract Tesseract configuration overrides from config maps."""
 
+    config = _rules_to_dict(config)
     if not isinstance(config, dict):
         return None
 
@@ -63,10 +75,11 @@ def resolve_ocr_options(config: Optional[Dict[str, Any]]) -> Optional[Dict[str, 
 
 
 def resolve_preprocessing_profile(
-    config: Optional[Dict[str, Any]]
+    config: Optional[Union[TemplateExtractionRules, Dict[str, Any]]]
 ) -> Optional[Dict[str, Any]]:
     """Extract preprocessing profile overrides from config maps."""
 
+    config = _rules_to_dict(config)
     if not isinstance(config, dict):
         return None
 
@@ -101,9 +114,12 @@ def resolve_preprocessing_profile(
 
 
 def resolve_field_rules(
-    extraction_rules: Optional[Dict[str, Any]]
+    extraction_rules: Optional[Union[TemplateExtractionRules, Dict[str, Any]]]
 ) -> Dict[str, Dict[str, Any]]:
     """Return mapping of field name to rule definitions."""
+
+    if isinstance(extraction_rules, TemplateExtractionRules):
+        return extraction_rules.get_field_rule_configs()
 
     if not isinstance(extraction_rules, dict):
         return {}
@@ -206,3 +222,37 @@ def run_field_level_ocr(
         results[field_name] = field_result
 
     return results
+
+
+def build_runtime_configuration(
+    extraction_rules: Optional[Union[TemplateExtractionRules, Dict[str, Any]]],
+    default_language: str
+) -> Dict[str, Any]:
+    """Prepare reusable runtime structures from stored template rules."""
+
+    rules_obj = (
+        extraction_rules
+        if isinstance(extraction_rules, TemplateExtractionRules)
+        else TemplateExtractionRules.parse_obj(extraction_rules or {})
+    )
+
+    effective_language = rules_obj.effective_language(default_language)
+    preprocessing_profile = resolve_preprocessing_profile(rules_obj)
+    ocr_options = resolve_ocr_options(rules_obj)
+    field_rules = resolve_field_rules(rules_obj)
+    field_hints = rules_obj.build_field_hints()
+    applied_summary = rules_obj.audit_summary(
+        effective_language=effective_language,
+        global_ocr_options=ocr_options,
+        preprocessing_profile=preprocessing_profile
+    )
+
+    return {
+        'rules': rules_obj,
+        'language': effective_language,
+        'ocr_options': ocr_options,
+        'preprocessing_profile': preprocessing_profile,
+        'field_rules': field_rules,
+        'field_hints': field_hints,
+        'summary': applied_summary
+    }

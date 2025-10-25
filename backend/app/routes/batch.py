@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from sqlalchemy.orm import Session
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import logging
 import asyncio
 
@@ -11,9 +11,7 @@ from ..models import BatchStartRequest, BatchStatusResponse
 from ..core.image_processor import ImageProcessor
 from ..core.ocr_engine import OCREngine
 from .ocr_utils import (
-    resolve_ocr_options,
-    resolve_preprocessing_profile,
-    resolve_field_rules,
+    build_runtime_configuration,
     run_field_level_ocr
 )
 from ..core.ai_field_mapper import AIFieldMapper
@@ -53,7 +51,16 @@ async def process_document_task(
             logger.error(f"Belge veya şablon bulunamadı: doc={document_id}, tpl={template_id}")
             return
 
-        template_rules: Dict[str, Any] = template.extraction_rules or {}
+        runtime_config = build_runtime_configuration(
+            template.extraction_rules,
+            settings.TESSERACT_LANG
+        )
+        global_profile = runtime_config['preprocessing_profile']
+        global_ocr_options = runtime_config['ocr_options']
+        field_rules = runtime_config['field_rules']
+        field_hints = runtime_config['field_hints']
+        applied_rules = runtime_config['summary']
+        rules_obj = runtime_config['rules']
 
         # Update status
         document.status = "processing"
@@ -61,7 +68,6 @@ async def process_document_task(
 
         # Process document
         image_processor = ImageProcessor(settings.TEMP_DIR)
-        global_profile = resolve_preprocessing_profile(template_rules)
         processed_document = image_processor.process_file(
             document.file_path,
             profile=global_profile
@@ -71,9 +77,10 @@ async def process_document_task(
             raise Exception("Resim işleme hatası")
 
         # Run OCR if required
+        ocr_cmd = rules_obj.ocr.tesseract_cmd if getattr(rules_obj, 'ocr', None) else None
         ocr_engine = OCREngine(
-            settings.TESSERACT_CMD,
-            settings.TESSERACT_LANG
+            ocr_cmd or settings.TESSERACT_CMD,
+            runtime_config['language']
         )
 
         if processed_document.text:
@@ -92,7 +99,6 @@ async def process_document_task(
                 'source': 'text-layer'
             }
         else:
-            global_ocr_options = resolve_ocr_options(template_rules)
             ocr_result = ocr_engine.extract_text(
                 processed_document.image_path,
                 options=global_ocr_options
@@ -104,7 +110,6 @@ async def process_document_task(
 
         # AI Mapping
         ai_mapper = AIFieldMapper(settings.OPENAI_API_KEY, settings.OPENAI_MODEL)
-        field_rules = resolve_field_rules(template_rules)
         if (
             field_rules
             and processed_document
@@ -124,7 +129,8 @@ async def process_document_task(
         mapping_result = ai_mapper.map_fields(
             ocr_result['text'],
             template.target_fields,
-            ocr_result
+            ocr_result,
+            field_hints=field_hints
         )
 
         # Extract field values and confidence scores
@@ -154,6 +160,7 @@ async def process_document_task(
             document_id,
             ocr_result.get('source', 'ocr')
         )
+        logger.debug("Uygulanan kurallar: %s", applied_rules)
 
     except Exception as e:
         logger.error(f"Belge işleme hatası {document_id}: {str(e)}")
@@ -177,6 +184,18 @@ async def start_batch_processing(
     Creates batch job and processes files in background
     """
     try:
+        template = db.query(Template).filter(
+            Template.id == request.template_id
+        ).first()
+
+        if not template:
+            raise HTTPException(status_code=404, detail="Şablon bulunamadı")
+
+        runtime_config = build_runtime_configuration(
+            template.extraction_rules,
+            settings.TESSERACT_LANG
+        )
+
         # Get pending documents for this template
         documents = db.query(Document).filter(
             Document.template_id == request.template_id,
@@ -224,6 +243,7 @@ async def start_batch_processing(
         return {
             'batch_job_id': batch_job.id,
             'total_files': len(documents),
+            'applied_rules': runtime_config['summary'],
             'message': 'Toplu işlem başlatıldı'
         }
 
@@ -247,6 +267,14 @@ async def get_batch_status(batch_job_id: int, db: Session = Depends(get_db)):
 
         if not batch_job:
             raise HTTPException(status_code=404, detail="Toplu işlem bulunamadı")
+
+        applied_rules: Optional[Dict[str, Any]] = None
+        if batch_job.template:
+            runtime_config = build_runtime_configuration(
+                batch_job.template.extraction_rules,
+                settings.TESSERACT_LANG
+            )
+            applied_rules = runtime_config['summary']
 
         # Count processed and failed
         total_docs = db.query(Document).filter(
@@ -306,7 +334,8 @@ async def get_batch_status(batch_job_id: int, db: Session = Depends(get_db)):
             total_files=total_docs,
             processed_files=completed_docs,
             failed_files=failed_docs,
-            low_confidence_items=low_confidence_items
+            low_confidence_items=low_confidence_items,
+            applied_rules=applied_rules
         )
 
     except HTTPException:
