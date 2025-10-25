@@ -11,6 +11,9 @@ class TemplateFieldCreate(BaseModel):
     required: bool = False
     calculated: bool = False
     calculation_rule: Optional[str] = None
+    regex_hint: Optional[str] = None
+    ocr_psm: Optional[str] = None
+    ocr_roi: Optional[Any] = None
 
 
 class TemplateFieldResponse(TemplateFieldCreate):

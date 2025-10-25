@@ -2,6 +2,7 @@
 import json
 import logging
 import re
+from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
 try:  # pragma: no cover - prefer modern OpenAI client
@@ -75,11 +76,11 @@ class AIFieldMapper:
 
         try:
             # Build prompt for GPT-4
-            regex_hits = self._pre_detect_fields(ocr_text)
+            field_evidence = self._pre_detect_fields(ocr_text, template_fields)
             prompt = self._build_mapping_prompt(
                 ocr_text,
                 template_fields,
-                regex_hits=regex_hits if regex_hits else None
+                field_evidence=field_evidence if field_evidence else None
             )
 
             # Call OpenAI API (supports both legacy and modern clients)
@@ -122,7 +123,7 @@ class AIFieldMapper:
             )
 
             if ocr_data and isinstance(ocr_data, dict):
-                self._merge_ocr_confidence(result, ocr_data)
+                self._merge_ocr_confidence(result, ocr_data, template_fields)
 
             logger.info(f"AI haritalama tamamlandı: {len(result)} alan")
             return result
@@ -145,160 +146,366 @@ class AIFieldMapper:
         self,
         ocr_text: str,
         template_fields: List[Dict[str, Any]],
-        regex_hits: Optional[Dict[str, str]] = None
+        field_evidence: Optional[Dict[str, Any]] = None
     ) -> str:
-        """
-        Build prompt for GPT-4
+        """Build the deterministic mapping prompt with full instructions and metadata."""
 
-        Args:
-            ocr_text: OCR extracted text
-            template_fields: Template field definitions
+        field_context = [self._build_field_context(field) for field in template_fields]
 
-        Returns:
-            Formatted prompt string
-        """
-        # Format field definitions
-        fields_description = []
-        for field in template_fields:
-            field_desc = f"- {field['field_name']} ({field['data_type']})"
-            if field.get('required'):
-                field_desc += " [Zorunlu]"
-            fields_description.append(field_desc)
+        instruction_block = (
+            "Amaç: OCR çıktısından hedef alan değerlerini tespit etmek, verilen "
+            "kısıtları uygulamak ve normalize edilmiş JSON yanıtı üretmek.\n"
+            "Öncelik Hiyerarşisi:\n"
+            "  1. Regex ipuçları ve ROI/PSM eşleşmeleriyle doğrulanmış sonuçlar.\n"
+            "  2. Aynı satır/sütun bağlamındaki açık metin eşleşmeleri.\n"
+            "  3. Destekleyici kanıtı olan çıkarımlar.\n"
+            "  4. Kanıt yoksa değeri null döndür.\n"
+            "Normalizasyon Kuralları:\n"
+            "  - Tarihler: DD.MM.YYYY veya DD/MM/YYYY, gün ve ay iki haneli.\n"
+            "  - Sayılar: Binlik ayracı nokta, ondalık virgül (ör: 1.234,56).\n"
+            "  - Metinler: Baş/son boşlukları temizle, Türkçe karakterleri koru.\n"
+            "Güven Politikası:\n"
+            "  - Regex+OCR teyidi varsa ≥0.9.\n"
+            "  - Bağlamla desteklenen ancak zayıf kanıtlı sonuçlar 0.4-0.7.\n"
+            "  - Emin değilsen 0.3 altı ve gerekirse null.\n"
+            "Deterministik Ayarlar:\n"
+            "  - Metinde olmayan bilgiyi uydurma.\n"
+            "  - Tüm alanları JSON şemasında sırayla döndür, anahtar adlarını değiştirme.\n"
+            "  - Kaynak açıklamalarını kısa ve kanıt gösterir şekilde yaz."
+        )
 
-        fields_str = "\n".join(fields_description)
+        output_schema = {
+            "mappings": {
+                "Alan Adı": {
+                    "value": "<string|null>",
+                    "confidence": 0.0,
+                    "source": "<kısa kanıt açıklaması>"
+                }
+            },
+            "overall_confidence": 0.0
+        }
 
-        prompt = f"""
-Aşağıdaki OCR metni bir belgeden çıkarılmıştır. Bu metindeki bilgileri belirtilen alanlara eşleştir.
+        prompt_sections = [
+            "Aşağıdaki OCR metni bir belgeden çıkarılmıştır."
+            " Talimatlara sıkı sıkıya bağlı kalarak alan değerlerini belirle.",
+            "\nTALİMAT SETİ:\n" + instruction_block,
+            "\nALAN METAVERİSİ:\n" + json.dumps(
+                field_context, ensure_ascii=False, indent=2
+            ),
+            "\nÇIKTI ŞEMASI:\n" + json.dumps(
+                output_schema, ensure_ascii=False, indent=2
+            ),
+            "\nOCR METNİ:\n" + ocr_text,
+            (
+                "\nYANIT FORMATIN:\n"
+                "Yanıtını yalnızca geçerli JSON ile ver."
+            )
+        ]
 
-HEDEF ALANLAR:
-{fields_str}
+        if field_evidence:
+            prompt_sections.append(
+                "\nÖN BULGULAR (Regex/Heuristik):\n" + json.dumps(
+                    field_evidence, ensure_ascii=False, indent=2
+                )
+            )
 
-OCR METNİ:
-{ocr_text}
+        return "\n".join(prompt_sections)
 
-GÖREV:
-Her alan için:
-1. Değeri bul (bulunamazsa null)
-2. Güven skoru belirle (0.0-1.0 arası)
-3. Bulunan değerin belgede nerede olduğunu açıkla (kısa)
+    def _build_field_context(self, field: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize field metadata for prompting."""
 
-Yanıtını şu JSON formatında ver:
-{{
-  "mappings": {{
-    "alan_adı": {{
-      "value": "bulunan değer veya null",
-      "confidence": 0.0-1.0,
-      "source": "değerin belgede nerede olduğu"
-    }}
-  }},
-  "overall_confidence": 0.0-1.0
-}}
+        data_type = field.get('data_type', 'text')
+        context: Dict[str, Any] = {
+            'name': field.get('field_name'),
+            'type': data_type,
+            'required': bool(field.get('required', False)),
+            'normalization': self._field_normalization_hint(data_type)
+        }
 
-ÖNEMLİ:
-- Türkçe karakterleri koru (ş, ğ, ü, ö, ç, İ)
-- Tarihler için DD/MM/YYYY veya DD.MM.YYYY formatını kullan
-- Sayılar için nokta ayracını koru (ör: 1.234,56)
-- Emin değilsen confidence düşük ver
-- Kesinlikle JSON formatında yanıt ver
-"""
+        regex_hint = field.get('regex_hint')
+        if regex_hint:
+            context['regex_hint'] = regex_hint
 
-        if regex_hits:
-            prompt += "\n\nÖN BULGULAR (Regex): " + json.dumps(regex_hits, ensure_ascii=False)
+        examples = field.get('examples') or field.get('format_examples') or field.get('example')
+        if isinstance(examples, str):
+            examples = [examples]
+        if not examples:
+            examples = self._default_examples_for_type(data_type)
+        if examples:
+            context['examples'] = examples
 
-        return prompt
+        ocr_psm = field.get('ocr_psm')
+        if ocr_psm not in (None, ''):
+            context['ocr_psm'] = ocr_psm
 
-    def _pre_detect_fields(self, ocr_text: str) -> Dict[str, str]:
-        """
-        Perform lightweight regex-based detections to guide the LLM.
+        ocr_roi = field.get('ocr_roi')
+        if ocr_roi is not None:
+            context['ocr_roi'] = ocr_roi
 
-        Args:
-            ocr_text: OCR extracted text.
+        if field.get('calculated'):
+            context['calculated'] = True
 
-        Returns:
-            Dictionary of field hints detected via regex.
-        """
-        if not ocr_text:
+        return context
+
+    def _default_examples_for_type(self, data_type: str) -> List[str]:
+        """Provide deterministic formatting examples by data type."""
+
+        if data_type == 'date':
+            return ['31.12.2023', '01/01/2024']
+        if data_type == 'number':
+            return ['1.234,56', '12.345,00']
+        return []
+
+    def _field_normalization_hint(self, data_type: str) -> str:
+        """Return normalization hint for a data type."""
+
+        hints = {
+            'date': 'Tarihleri DD.MM.YYYY veya DD/MM/YYYY biçimine dönüştür.',
+            'number': 'Sayıları 1.234,56 formatında yaz, gereksiz karakterleri kaldır.',
+            'text': 'Metni olduğu gibi aktar, baş/son boşlukları temizle.'
+        }
+        return hints.get(data_type, hints['text'])
+
+    @staticmethod
+    def _safe_float(value: Any) -> Optional[float]:
+        """Safely convert to float."""
+
+        if value is None:
+            return None
+
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _normalize_token(token: str) -> str:
+        """Normalize tokens for fuzzy OCR comparisons."""
+
+        return re.sub(r'[^0-9a-zA-ZçğıöşüÇĞİÖŞÜ]', '', token).lower()
+
+    def _build_word_confidence_map(self, ocr_data: Dict[str, Any]) -> Dict[str, List[float]]:
+        """Aggregate OCR confidences per normalized token."""
+
+        if not isinstance(ocr_data, dict):
             return {}
 
-        fields: Dict[str, str] = {}
+        token_confidences: Dict[str, List[float]] = defaultdict(list)
 
-        if match := re.search(r"\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b", ocr_text):
-            fields["Tarih"] = match.group(0)
+        confidence_scores = ocr_data.get('confidence_scores')
+        if isinstance(confidence_scores, dict):
+            for token, score in confidence_scores.items():
+                if not isinstance(token, str):
+                    continue
+                float_score = self._safe_float(score)
+                if float_score is None:
+                    continue
+                float_score = max(0.0, min(float_score, 1.0))
+                lowered = token.strip().lower()
+                if lowered:
+                    token_confidences[lowered].append(float_score)
+                normalized = self._normalize_token(token)
+                if normalized and normalized != lowered:
+                    token_confidences[normalized].append(float_score)
 
-        if match := re.search(r"MAK[-\s]*\d{4,}", ocr_text, re.IGNORECASE):
-            fields["Makine No"] = match.group(0)
+        words_with_bbox = ocr_data.get('words_with_bbox')
+        if isinstance(words_with_bbox, list):
+            for entry in words_with_bbox:
+                if not isinstance(entry, dict):
+                    continue
+                word = entry.get('word')
+                confidence = self._safe_float(entry.get('confidence'))
+                if not word or confidence is None:
+                    continue
+                confidence = max(0.0, min(confidence, 1.0))
+                lowered = word.strip().lower()
+                if lowered:
+                    token_confidences[lowered].append(confidence)
+                normalized = self._normalize_token(word)
+                if normalized and normalized != lowered:
+                    token_confidences[normalized].append(confidence)
 
-        return fields
+        # Remove empty entries
+        return {token: scores for token, scores in token_confidences.items() if scores}
+
+    def _compute_value_ocr_confidence(
+        self,
+        value: str,
+        word_conf_map: Dict[str, List[float]]
+    ) -> Optional[float]:
+        """Return OCR confidence aligned with the provided value."""
+
+        if not value:
+            return None
+
+        tokens = re.findall(r"[0-9A-Za-zçğıöşüÇĞİÖŞÜ]+", value)
+        if not tokens:
+            tokens = [value]
+
+        confidences: List[float] = []
+
+        for token in tokens:
+            lowered = token.strip().lower()
+            candidates = word_conf_map.get(lowered)
+            if not candidates:
+                normalized = self._normalize_token(token)
+                candidates = word_conf_map.get(normalized)
+            if candidates:
+                confidences.append(sum(candidates) / len(candidates))
+
+        if not confidences:
+            return None
+
+        coverage = len(confidences) / len(tokens) if tokens else 1.0
+        avg_conf = sum(confidences) / len(confidences)
+
+        return max(0.0, min(1.0, avg_conf * coverage))
+
+    def _pre_detect_fields(
+        self,
+        ocr_text: str,
+        template_fields: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Perform lightweight detections (regex + heuristics) to guide the LLM."""
+
+        if not ocr_text or not template_fields:
+            return {}
+
+        evidence: Dict[str, Any] = {}
+
+        # 1) Respect user-provided regex hints per field.
+        for field in template_fields:
+            field_name = field.get('field_name')
+            pattern_text = field.get('regex_hint')
+
+            if not field_name or not pattern_text:
+                continue
+
+            try:
+                pattern = re.compile(pattern_text, re.IGNORECASE)
+            except re.error as exc:
+                logger.warning(
+                    "Geçersiz regex ipucu (%s) alanı %s için: %s",
+                    pattern_text,
+                    field_name,
+                    exc
+                )
+                continue
+
+            matches = pattern.findall(ocr_text)
+            if not matches:
+                continue
+
+            normalized_matches: List[str] = []
+            for match in matches:
+                if isinstance(match, tuple):
+                    normalized_matches.append(" ".join(part for part in match if part))
+                else:
+                    normalized_matches.append(str(match))
+
+            if normalized_matches:
+                evidence[field_name] = {
+                    'pattern': pattern.pattern,
+                    'matches': normalized_matches
+                }
+
+        # 2) Apply general heuristics for commonly formatted data types.
+        date_matches = re.findall(r"\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b", ocr_text)
+        if date_matches:
+            deduped_dates = list(dict.fromkeys(date_matches))[:3]
+            for field in template_fields:
+                if (
+                    field.get('data_type') == 'date'
+                    and field.get('field_name') not in evidence
+                    and deduped_dates
+                ):
+                    evidence[field['field_name']] = {
+                        'pattern': 'auto_date',
+                        'matches': deduped_dates
+                    }
+
+        number_matches = re.findall(
+            r"\b\d{1,3}(?:[.,]\d{3})*(?:[.,]\d+)?\b",
+            ocr_text
+        )
+        if number_matches:
+            deduped_numbers = list(dict.fromkeys(number_matches))[:5]
+            for field in template_fields:
+                if (
+                    field.get('data_type') == 'number'
+                    and field.get('field_name') not in evidence
+                    and deduped_numbers
+                ):
+                    evidence[field['field_name']] = {
+                        'pattern': 'auto_number',
+                        'matches': deduped_numbers
+                    }
+
+        return evidence
 
     def _merge_ocr_confidence(
         self,
         result: Dict[str, Any],
-        ocr_data: Dict[str, Any]
+        ocr_data: Dict[str, Any],
+        template_fields: List[Dict[str, Any]]
     ) -> None:
-        """
-        Merge OCR engine confidence scores with AI-produced confidences.
+        """Blend OCR confidences with LLM scores using template metadata."""
 
-        Args:
-            result: Parsed AI response.
-            ocr_data: Detailed OCR data that may include confidence scores.
-        """
-        confidence_scores = ocr_data.get("confidence_scores")
-        if not isinstance(confidence_scores, dict):
+        field_mappings = result.get('field_mappings')
+        if not isinstance(field_mappings, dict) or not field_mappings:
             return
 
-        normalized_scores: Dict[str, float] = {}
-        for key, value in confidence_scores.items():
-            if not isinstance(key, str):
-                continue
-            try:
-                score = float(value)
-            except (TypeError, ValueError):
-                continue
-            normalized_scores[key.lower()] = max(0.0, min(score, 1.0))
-
-        if not normalized_scores:
-            return
-
-        field_mappings = result.get("field_mappings", {})
-        if not isinstance(field_mappings, dict):
-            return
+        word_conf_map = self._build_word_confidence_map(ocr_data)
+        metadata_index = {
+            field.get('field_name'): field for field in template_fields if field.get('field_name')
+        }
 
         collected_confidences: List[float] = []
 
-        for mapping in field_mappings.values():
-            value = mapping.get('value') if isinstance(mapping, dict) else None
-            if value is None:
+        for field_name, mapping in field_mappings.items():
+            if not isinstance(mapping, dict):
                 continue
 
-            if not isinstance(value, str):
-                value_str = str(value)
-            else:
-                value_str = value
+            metadata = metadata_index.get(field_name, {})
+            llm_conf = self._safe_float(mapping.get('confidence')) or 0.0
+            value = mapping.get('value')
+            value_str = str(value).strip() if value not in (None, "") else ""
 
-            lowered_value = value_str.lower()
-            matched_scores = [
-                score for token, score in normalized_scores.items() if token in lowered_value
-            ]
+            ocr_conf = None
+            if value_str and word_conf_map:
+                ocr_conf = self._compute_value_ocr_confidence(value_str, word_conf_map)
 
-            if not matched_scores:
-                continue
+            regex_ok = True
+            regex_hint = metadata.get('regex_hint')
+            if regex_hint and value_str:
+                try:
+                    regex_ok = bool(re.search(regex_hint, value_str))
+                except re.error:
+                    regex_ok = True
 
-            avg_confidence = sum(matched_scores) / len(matched_scores)
-            if isinstance(mapping, dict):
-                current_conf = float(mapping.get('confidence', 0.0))
-                merged_conf = max(current_conf, avg_confidence)
-                mapping['confidence'] = merged_conf
-                collected_confidences.append(merged_conf)
+            combined_conf = llm_conf
+            if ocr_conf is not None:
+                combined_conf = (llm_conf * 0.6) + (ocr_conf * 0.4)
+
+            if not regex_ok:
+                combined_conf = min(combined_conf, llm_conf * 0.5)
+
+            if metadata.get('required') and not value_str:
+                combined_conf = 0.0
+
+            combined_conf = max(0.0, min(1.0, combined_conf))
+
+            mapping['confidence'] = combined_conf
+            mapping['confidence_breakdown'] = {
+                'llm': llm_conf,
+                'ocr': ocr_conf,
+                'regex_valid': regex_ok
+            }
+
+            collected_confidences.append(combined_conf)
 
         if collected_confidences:
-            overall_conf = result.get('overall_confidence')
-            try:
-                overall_conf_value = float(overall_conf)
-            except (TypeError, ValueError):
-                overall_conf_value = 0.0
-
-            averaged = sum(collected_confidences) / len(collected_confidences)
-            result['overall_confidence'] = max(overall_conf_value, averaged)
+            result['overall_confidence'] = sum(collected_confidences) / len(collected_confidences)
 
     def _parse_ai_response(
         self,
@@ -342,6 +549,13 @@ Yanıtını şu JSON formatında ver:
 
             for field in template_fields:
                 field_name = field['field_name']
+                metadata = {
+                    'data_type': field.get('data_type'),
+                    'required': bool(field.get('required', False)),
+                    'regex_hint': field.get('regex_hint'),
+                    'ocr_psm': field.get('ocr_psm'),
+                    'ocr_roi': field.get('ocr_roi')
+                }
 
                 if field_name in mappings:
                     mapping = mappings[field_name]
@@ -349,7 +563,9 @@ Yanıtını şu JSON formatında ver:
                         'value': mapping.get('value'),
                         'confidence': float(mapping.get('confidence', 0.0)),
                         'source': mapping.get('source', ''),
-                        'data_type': field['data_type']
+                        'data_type': field['data_type'],
+                        'required': metadata['required'],
+                        'metadata': metadata
                     }
                 else:
                     # Field not found
@@ -357,7 +573,9 @@ Yanıtını şu JSON formatında ver:
                         'value': None,
                         'confidence': 0.0,
                         'source': 'Bulunamadı',
-                        'data_type': field['data_type']
+                        'data_type': field['data_type'],
+                        'required': metadata['required'],
+                        'metadata': metadata
                     }
 
             return result
@@ -395,7 +613,15 @@ Yanıtını şu JSON formatında ver:
                 'value': None,
                 'confidence': 0.0,
                 'source': 'Hata oluştu',
-                'data_type': field['data_type']
+                'data_type': field['data_type'],
+                'required': bool(field.get('required', False)),
+                'metadata': {
+                    'data_type': field.get('data_type'),
+                    'required': bool(field.get('required', False)),
+                    'regex_hint': field.get('regex_hint'),
+                    'ocr_psm': field.get('ocr_psm'),
+                    'ocr_roi': field.get('ocr_roi')
+                }
             }
 
         return result
