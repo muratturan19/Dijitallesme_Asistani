@@ -1,14 +1,21 @@
 # -*- coding: utf-8 -*-
-import openai
 import json
 import logging
-from typing import Dict, List, Any, Optional
+from typing import Any, Dict, List, Optional
 
-try:
-    from openai.error import AuthenticationError, OpenAIError
-except ImportError:  # pragma: no cover - fallback for different openai versions
-    AuthenticationError = Exception
-    OpenAIError = Exception
+try:  # pragma: no cover - prefer modern OpenAI client
+    from openai import OpenAI, AuthenticationError, OpenAIError
+except ImportError:  # pragma: no cover - fallback for legacy client
+    OpenAI = None  # type: ignore
+    import openai  # type: ignore
+
+    try:
+        from openai.error import AuthenticationError, OpenAIError  # type: ignore
+    except ImportError:  # pragma: no cover - final fallback
+        AuthenticationError = Exception
+        OpenAIError = Exception
+else:
+    import openai  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +33,16 @@ class AIFieldMapper:
         """
         self.api_key = api_key
         self.model = model
-        openai.api_key = api_key
         self._has_valid_api_key = bool(api_key and api_key.strip())
+
+        self._client = None
+        if self._has_valid_api_key:
+            if OpenAI is not None:
+                # Modern OpenAI client (>=1.0)
+                self._client = OpenAI(api_key=api_key)
+            else:
+                # Legacy client (<1.0)
+                openai.api_key = api_key
 
         if not self._has_valid_api_key:
             logger.error(
@@ -61,30 +76,42 @@ class AIFieldMapper:
             # Build prompt for GPT-4
             prompt = self._build_mapping_prompt(ocr_text, template_fields)
 
-            # Call OpenAI API
-            response = openai.ChatCompletion.create(
-                model=self.model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "Sen bir belge analiz uzmanısın. Görevi, OCR ile çıkarılan "
-                            "metinden belirli alanları tespit etmek ve değerlerini bulmaktır. "
-                            "Cevaplarını JSON formatında ver. Türkçe karakterleri doğru tanı."
-                        )
-                    },
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ],
-                temperature=0.1,  # Low temperature for consistent results
-                max_tokens=2000
-            )
+            # Call OpenAI API (supports both legacy and modern clients)
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "Sen bir belge analiz uzmanısın. Görevi, OCR ile çıkarılan "
+                        "metinden belirli alanları tespit etmek ve değerlerini bulmaktır. "
+                        "Cevaplarını JSON formatında ver. Türkçe karakterleri doğru tanı."
+                    )
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
+
+            if self._client is not None:
+                response = self._client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    temperature=0.1,
+                    max_tokens=2000
+                )
+                ai_message = response.choices[0].message.content
+            else:
+                response = openai.ChatCompletion.create(
+                    model=self.model,
+                    messages=messages,
+                    temperature=0.1,
+                    max_tokens=2000
+                )
+                ai_message = response.choices[0].message.content
 
             # Parse response
             result = self._parse_ai_response(
-                response.choices[0].message.content,
+                ai_message,
                 template_fields
             )
 
