@@ -24,7 +24,7 @@ class Settings:
     # File Upload Configuration
     MAX_FILE_SIZE_MB: int = int(os.getenv("MAX_FILE_SIZE_MB", "10"))
     MAX_FILE_SIZE_BYTES: int = MAX_FILE_SIZE_MB * 1024 * 1024
-    ALLOWED_EXTENSIONS: set = {".pdf", ".jpg", ".jpeg", ".png"}
+    ALLOWED_EXTENSIONS: set = {".pdf", ".jpg", ".jpeg", ".png", ".xlsx", ".xls", ".csv"}
     ALLOWED_TEMPLATE_EXTENSIONS: set = {".xlsx", ".xls", ".csv"}
 
     # Directory Configuration
