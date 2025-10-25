@@ -5,8 +5,10 @@ from PIL import Image
 import fitz  # PyMuPDF
 from pathlib import Path
 import logging
-from typing import Optional
+from typing import Optional, Dict, Any, Tuple
 from dataclasses import dataclass
+import uuid
+import re
 
 
 @dataclass
@@ -16,6 +18,7 @@ class ProcessedDocument:
     text: Optional[str]
     image_path: Optional[str]
     source: str
+    original_image_path: Optional[str] = None
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +30,11 @@ class ImageProcessor:
         self.temp_dir = temp_dir
         self.temp_dir.mkdir(parents=True, exist_ok=True)
 
-    def process_file(self, file_path: str) -> Optional[ProcessedDocument]:
+    def process_file(
+        self,
+        file_path: str,
+        profile: Optional[Dict[str, Any]] = None
+    ) -> Optional[ProcessedDocument]:
         """
         Process uploaded file (PDF or image) and return either extracted text
         from the PDF text layer or the path to a preprocessed image ready for
@@ -63,16 +70,22 @@ class ImageProcessor:
                     file_path
                 )
                 image_path = self._pdf_to_image(file_path)
+                original_image_path = image_path
             else:
                 image_path = str(file_path)
+                original_image_path = image_path
 
-            # Preprocess the image
-            preprocessed_path = self._preprocess_image(image_path)
+            # Preprocess the image with optional overrides
+            preprocessed_path = self._preprocess_image(
+                image_path,
+                profile=profile
+            )
 
             return ProcessedDocument(
                 text=None,
                 image_path=preprocessed_path,
-                source='ocr'
+                source='ocr',
+                original_image_path=original_image_path
             )
 
         except Exception as e:
@@ -142,7 +155,11 @@ class ImageProcessor:
             logger.error(f"PDF dönüştürme hatası {pdf_path}: {str(e)}")
             raise
 
-    def _preprocess_image(self, image_path: str) -> str:
+    def _preprocess_image(
+        self,
+        image_path: str,
+        profile: Optional[Dict[str, Any]] = None
+    ) -> str:
         """
         Preprocess image for better OCR results
 
@@ -166,32 +183,11 @@ class ImageProcessor:
             if image is None:
                 raise ValueError(f"Resim okunamadı: {image_path}")
 
-            # 1. Convert to grayscale
-            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-
-            # 2. Denoise
-            denoised = cv2.fastNlMeansDenoising(gray, None, 10, 7, 21)
-
-            # 3. Deskew
-            deskewed = self._deskew(denoised)
-
-            # 4. Enhance contrast (CLAHE - Contrast Limited Adaptive Histogram Equalization)
-            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-            enhanced = clahe.apply(deskewed)
-
-            # 5. Adaptive thresholding for binarization
-            binary = cv2.adaptiveThreshold(
-                enhanced,
-                255,
-                cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                cv2.THRESH_BINARY,
-                11,
-                2
-            )
+            processed_image = self._apply_preprocessing_steps(image, profile)
 
             # Save preprocessed image
             output_path = self.temp_dir / f"preprocessed_{Path(image_path).name}"
-            cv2.imwrite(str(output_path), binary)
+            cv2.imwrite(str(output_path), processed_image)
 
             logger.info(f"Resim işlendi: {output_path}")
             return str(output_path)
@@ -200,6 +196,188 @@ class ImageProcessor:
             logger.error(f"Resim işleme hatası {image_path}: {str(e)}")
             # Return original image if preprocessing fails
             return str(image_path)
+
+    def prepare_field_image(
+        self,
+        base_image_path: str,
+        field_name: str,
+        roi: Optional[Any] = None,
+        preprocessing_profile: Optional[Dict[str, Any]] = None
+    ) -> Optional[str]:
+        """Crop and preprocess a specific field region for OCR."""
+
+        try:
+            image = cv2.imread(str(base_image_path))
+
+            if image is None:
+                raise ValueError(f"Resim okunamadı: {base_image_path}")
+
+            crop_coords = None
+            if roi is not None:
+                crop_coords = self._parse_roi(roi, image)
+
+            if crop_coords:
+                x1, y1, x2, y2 = crop_coords
+                image = image[y1:y2, x1:x2]
+
+            processed = self._apply_preprocessing_steps(image, preprocessing_profile)
+
+            safe_field = re.sub(r"[^A-Za-z0-9_-]+", "_", field_name).strip("_") or "field"
+            output_name = (
+                f"field_{safe_field}_{uuid.uuid4().hex[:8]}_{Path(base_image_path).stem}.png"
+            )
+            output_path = self.temp_dir / output_name
+            cv2.imwrite(str(output_path), processed)
+
+            return str(output_path)
+
+        except Exception as exc:
+            logger.error(
+                "Alan görüntüsü hazırlanamadı %s (%s): %s",
+                field_name,
+                base_image_path,
+                str(exc)
+            )
+            return None
+
+    def _apply_preprocessing_steps(
+        self,
+        image: np.ndarray,
+        profile: Optional[Dict[str, Any]] = None
+    ) -> np.ndarray:
+        """Apply preprocessing pipeline with configurable steps."""
+
+        options = self._normalize_profile(profile)
+
+        if image.ndim == 3:
+            processed = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        else:
+            processed = image.copy()
+
+        if options['denoise']:
+            h = int(options.get('denoise_strength', 10))
+            processed = cv2.fastNlMeansDenoising(processed, None, h, 7, 21)
+
+        if options['deskew']:
+            processed = self._deskew(processed)
+
+        if options['contrast']:
+            clip_limit = float(options.get('clahe_clip_limit', 2.0))
+            tile_grid = options.get('clahe_tile_grid_size', (8, 8))
+            if isinstance(tile_grid, (list, tuple)) and len(tile_grid) == 2:
+                tile_grid_size = (int(tile_grid[0]), int(tile_grid[1]))
+            else:
+                tile_grid_size = (8, 8)
+            clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
+            processed = clahe.apply(processed)
+
+        if options['threshold']:
+            block_size = int(options.get('threshold_block_size', 11))
+            if block_size % 2 == 0:
+                block_size += 1
+            constant = int(options.get('threshold_constant', 2))
+            processed = cv2.adaptiveThreshold(
+                processed,
+                255,
+                cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                cv2.THRESH_BINARY,
+                block_size,
+                constant
+            )
+
+        return processed
+
+    def _normalize_profile(
+        self,
+        profile: Optional[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Merge profile overrides with defaults."""
+
+        defaults: Dict[str, Any] = {
+            'denoise': True,
+            'denoise_strength': 10,
+            'deskew': True,
+            'contrast': True,
+            'clahe_clip_limit': 2.0,
+            'clahe_tile_grid_size': (8, 8),
+            'threshold': True,
+            'threshold_block_size': 11,
+            'threshold_constant': 2
+        }
+
+        if not profile:
+            return defaults
+
+        normalized = defaults.copy()
+        for key, value in profile.items():
+            if key not in normalized:
+                if key == 'adaptive_threshold':
+                    normalized['threshold'] = bool(value)
+                else:
+                    continue
+            else:
+                normalized[key] = value
+
+        for boolean_key in ['denoise', 'deskew', 'contrast', 'threshold']:
+            normalized[boolean_key] = bool(normalized.get(boolean_key))
+
+        return normalized
+
+    def _parse_roi(
+        self,
+        roi: Any,
+        image: np.ndarray
+    ) -> Optional[Tuple[int, int, int, int]]:
+        """Normalize ROI definitions into pixel coordinates."""
+
+        try:
+            height, width = image.shape[:2]
+
+            x = y = None
+            w = h = None
+
+            if isinstance(roi, (list, tuple)) and len(roi) >= 4:
+                x, y, w, h = [int(float(val)) for val in roi[:4]]
+            elif isinstance(roi, dict):
+                x = int(float(roi.get('x', roi.get('left', 0))))
+                y = int(float(roi.get('y', roi.get('top', 0))))
+
+                if 'width' in roi or 'w' in roi:
+                    w = int(float(roi.get('width', roi.get('w', 0))))
+                elif 'x2' in roi:
+                    w = int(float(roi['x2'])) - x
+
+                if 'height' in roi or 'h' in roi:
+                    h = int(float(roi.get('height', roi.get('h', 0))))
+                elif 'y2' in roi:
+                    h = int(float(roi['y2'])) - y
+            else:
+                return None
+
+            if w is None or h is None:
+                return None
+
+            padding_x = padding_y = 0
+            if isinstance(roi, dict) and roi.get('padding') is not None:
+                padding = roi.get('padding')
+                if isinstance(padding, (list, tuple)) and len(padding) >= 2:
+                    padding_x = int(float(padding[0]))
+                    padding_y = int(float(padding[1]))
+                else:
+                    padding_x = padding_y = int(float(padding))
+
+            x1 = max(0, x - padding_x)
+            y1 = max(0, y - padding_y)
+            x2 = min(width, x + w + padding_x)
+            y2 = min(height, y + h + padding_y)
+
+            if x2 <= x1 or y2 <= y1:
+                return None
+
+            return x1, y1, x2, y2
+
+        except Exception:
+            return None
 
     def _deskew(self, image: np.ndarray) -> np.ndarray:
         """
