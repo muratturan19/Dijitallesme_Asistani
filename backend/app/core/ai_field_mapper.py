@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import json
 import logging
+import re
 from typing import Any, Dict, List, Optional
 
 try:  # pragma: no cover - prefer modern OpenAI client
@@ -74,7 +75,12 @@ class AIFieldMapper:
 
         try:
             # Build prompt for GPT-4
-            prompt = self._build_mapping_prompt(ocr_text, template_fields)
+            regex_hits = self._pre_detect_fields(ocr_text)
+            prompt = self._build_mapping_prompt(
+                ocr_text,
+                template_fields,
+                regex_hits=regex_hits if regex_hits else None
+            )
 
             # Call OpenAI API (supports both legacy and modern clients)
             messages = [
@@ -115,6 +121,9 @@ class AIFieldMapper:
                 template_fields
             )
 
+            if ocr_data and isinstance(ocr_data, dict):
+                self._merge_ocr_confidence(result, ocr_data)
+
             logger.info(f"AI haritalama tamamlandı: {len(result)} alan")
             return result
 
@@ -135,7 +144,8 @@ class AIFieldMapper:
     def _build_mapping_prompt(
         self,
         ocr_text: str,
-        template_fields: List[Dict[str, Any]]
+        template_fields: List[Dict[str, Any]],
+        regex_hits: Optional[Dict[str, str]] = None
     ) -> str:
         """
         Build prompt for GPT-4
@@ -192,7 +202,103 @@ Yanıtını şu JSON formatında ver:
 - Kesinlikle JSON formatında yanıt ver
 """
 
+        if regex_hits:
+            prompt += "\n\nÖN BULGULAR (Regex): " + json.dumps(regex_hits, ensure_ascii=False)
+
         return prompt
+
+    def _pre_detect_fields(self, ocr_text: str) -> Dict[str, str]:
+        """
+        Perform lightweight regex-based detections to guide the LLM.
+
+        Args:
+            ocr_text: OCR extracted text.
+
+        Returns:
+            Dictionary of field hints detected via regex.
+        """
+        if not ocr_text:
+            return {}
+
+        fields: Dict[str, str] = {}
+
+        if match := re.search(r"\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b", ocr_text):
+            fields["Tarih"] = match.group(0)
+
+        if match := re.search(r"MAK[-\s]*\d{4,}", ocr_text, re.IGNORECASE):
+            fields["Makine No"] = match.group(0)
+
+        return fields
+
+    def _merge_ocr_confidence(
+        self,
+        result: Dict[str, Any],
+        ocr_data: Dict[str, Any]
+    ) -> None:
+        """
+        Merge OCR engine confidence scores with AI-produced confidences.
+
+        Args:
+            result: Parsed AI response.
+            ocr_data: Detailed OCR data that may include confidence scores.
+        """
+        confidence_scores = ocr_data.get("confidence_scores")
+        if not isinstance(confidence_scores, dict):
+            return
+
+        normalized_scores: Dict[str, float] = {}
+        for key, value in confidence_scores.items():
+            if not isinstance(key, str):
+                continue
+            try:
+                score = float(value)
+            except (TypeError, ValueError):
+                continue
+            normalized_scores[key.lower()] = max(0.0, min(score, 1.0))
+
+        if not normalized_scores:
+            return
+
+        field_mappings = result.get("field_mappings", {})
+        if not isinstance(field_mappings, dict):
+            return
+
+        collected_confidences: List[float] = []
+
+        for mapping in field_mappings.values():
+            value = mapping.get('value') if isinstance(mapping, dict) else None
+            if value is None:
+                continue
+
+            if not isinstance(value, str):
+                value_str = str(value)
+            else:
+                value_str = value
+
+            lowered_value = value_str.lower()
+            matched_scores = [
+                score for token, score in normalized_scores.items() if token in lowered_value
+            ]
+
+            if not matched_scores:
+                continue
+
+            avg_confidence = sum(matched_scores) / len(matched_scores)
+            if isinstance(mapping, dict):
+                current_conf = float(mapping.get('confidence', 0.0))
+                merged_conf = max(current_conf, avg_confidence)
+                mapping['confidence'] = merged_conf
+                collected_confidences.append(merged_conf)
+
+        if collected_confidences:
+            overall_conf = result.get('overall_confidence')
+            try:
+                overall_conf_value = float(overall_conf)
+            except (TypeError, ValueError):
+                overall_conf_value = 0.0
+
+            averaged = sum(collected_confidences) / len(collected_confidences)
+            result['overall_confidence'] = max(overall_conf_value, averaged)
 
     def _parse_ai_response(
         self,
