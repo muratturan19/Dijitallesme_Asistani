@@ -140,6 +140,18 @@ def init_db():
                 "regex_hint",
                 "regex_hint VARCHAR(500) NULL",
             )
+            _ensure_column(
+                conn,
+                "template_fields",
+                "ocr_psm",
+                "ocr_psm VARCHAR(32) NULL",
+            )
+            _ensure_column(
+                conn,
+                "template_fields",
+                "ocr_roi",
+                "ocr_roi TEXT NULL",
+            )
 
 
 # Dependency to get DB session
