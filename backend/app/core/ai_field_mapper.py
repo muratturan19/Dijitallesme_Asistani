@@ -693,6 +693,50 @@ class AIFieldMapper:
         if collected_confidences:
             result['overall_confidence'] = sum(collected_confidences) / len(collected_confidences)
 
+    def _strip_code_fences(self, response_text: str) -> str:
+        """Remove common markdown code fences from an LLM response."""
+        text = response_text.strip()
+
+        if text.startswith("```json"):
+            text = text[7:]
+        elif text.startswith("```"):
+            text = text[3:]
+
+        if text.endswith("```"):
+            text = text[:-3]
+
+        return text.strip()
+
+    def _extract_json_object(self, response_text: str) -> Optional[str]:
+        """Try to extract the first complete JSON object from text."""
+        brace_depth = 0
+        start_index: Optional[int] = None
+
+        for index, char in enumerate(response_text):
+            if char == '{':
+                if brace_depth == 0:
+                    start_index = index
+                brace_depth += 1
+            elif char == '}':
+                if brace_depth:
+                    brace_depth -= 1
+                    if brace_depth == 0 and start_index is not None:
+                        return response_text[start_index:index + 1]
+
+        return None
+
+    def _safe_json_loads(self, response_text: str) -> Dict[str, Any]:
+        """Parse JSON from AI response, handling markdown and extra text."""
+        cleaned_text = self._strip_code_fences(response_text)
+
+        try:
+            return json.loads(cleaned_text)
+        except json.JSONDecodeError:
+            extracted_json = self._extract_json_object(cleaned_text)
+            if extracted_json:
+                return json.loads(extracted_json)
+            raise
+
     def _parse_ai_response(
         self,
         response_text: str,
@@ -709,21 +753,7 @@ class AIFieldMapper:
             Formatted mapping result
         """
         try:
-            # Try to parse JSON from response
-            # Sometimes GPT wraps JSON in markdown code blocks
-            response_text = response_text.strip()
-
-            if response_text.startswith("```json"):
-                response_text = response_text[7:]
-            if response_text.startswith("```"):
-                response_text = response_text[3:]
-            if response_text.endswith("```"):
-                response_text = response_text[:-3]
-
-            response_text = response_text.strip()
-
-            # Parse JSON
-            ai_result = json.loads(response_text)
+            ai_result = self._safe_json_loads(response_text)
 
             # Format result
             result = {
