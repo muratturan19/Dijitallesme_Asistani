@@ -100,14 +100,34 @@ class AIFieldMapper:
                 field_hints=self._summarize_field_hints(hints)
             )
 
+            source = (ocr_data or {}).get('source', 'unknown') if ocr_data else 'unknown'
+            max_completion_tokens = 2000
+            temperature = 0.0
+            response_format = {"type": "json_object"}
+
+            logger.info(
+                "AI eşleme çağrısı: model=%s, response_format=%s, max_completion_tokens=%s, temperature=%s",
+                self.model,
+                response_format.get('type'),
+                max_completion_tokens,
+                temperature,
+            )
+            logger.info("OCR kaynağı: %s", source)
+            logger.debug(
+                "Regex ön bulgusu olan alan sayısı: %s, field hint alan sayısı: %s",
+                len(field_evidence or {}),
+                len(hints),
+            )
+
             # Call OpenAI API (supports both legacy and modern clients)
             messages = [
                 {
                     "role": "system",
                     "content": (
-                        "Sen bir belge analiz uzmanısın. Görevi, OCR ile çıkarılan "
-                        "metinden belirli alanları tespit etmek ve değerlerini bulmaktır. "
-                        "Cevaplarını JSON formatında ver. Türkçe karakterleri doğru tanı."
+                        "Sen bir belge analiz uzmanısın. Görevin, OCR ile çıkarılan metinden "
+                        "belirli alanları tespit etmek ve değerlerini bulmaktır. Sadece geçerli "
+                        "JSON döndür. Açıklama, başlık, markdown veya code fence ekleme. Türkçe "
+                        "karakterleri doğru tanı."
                     )
                 },
                 {
@@ -120,27 +140,46 @@ class AIFieldMapper:
                 response = self._client.chat.completions.create(
                     model=self.model,
                     messages=messages,
-                    max_completion_tokens=2000
+                    response_format=response_format,
+                    max_completion_tokens=max_completion_tokens,
+                    temperature=temperature
                 )
                 ai_message = response.choices[0].message.content
             else:
                 response = openai.ChatCompletion.create(
                     model=self.model,
                     messages=messages,
-                    max_tokens=2000
+                    max_tokens=max_completion_tokens,
+                    temperature=temperature
                 )
                 ai_message = response.choices[0].message.content
+
+            if not ai_message:
+                logger.error("OpenAI'den boş yanıt alındı")
+                return self._create_empty_mapping(
+                    template_fields,
+                    "OpenAI'den geçerli yanıt alınamadı"
+                )
+
+            logger.debug(
+                "AI ham yanıtı (ilk 1000 karakter): %s",
+                ai_message[:1000]
+            )
 
             # Parse response
             result = self._parse_ai_response(
                 ai_message,
-                template_fields
+                template_fields,
+                field_evidence=field_evidence
             )
 
             if ocr_data and isinstance(ocr_data, dict):
                 self._merge_ocr_confidence(result, ocr_data, template_fields)
 
-            logger.info(f"AI haritalama tamamlandı: {len(result)} alan")
+            logger.info(
+                "AI haritalama tamamlandı: %s alan",
+                len(result.get('field_mappings', {}))
+            )
             return result
 
         except AuthenticationError as e:
@@ -166,28 +205,20 @@ class AIFieldMapper:
         self,
         ocr_text: str,
         template_fields: List[Dict[str, Any]],
-        regex_hits: Optional[Dict[str, Any]] = None,
+        *,
         field_hints: Optional[Dict[str, Any]] = None,
+        field_evidence: Optional[Dict[str, Any]] = None,
         **kwargs: Any
     ) -> str:
         """Build the deterministic mapping prompt with full instructions and metadata."""
 
         # Accept historical call signatures gracefully.
-        field_evidence: Optional[Dict[str, Any]] = kwargs.get('field_evidence')
+        legacy_regex_hits = kwargs.get('regex_hits')
+        if field_evidence is None and isinstance(legacy_regex_hits, dict):
+            field_evidence = legacy_regex_hits
 
         # Merge hints provided by previous "regex_hits" argument and the new "field_hints".
         merged_hints: Dict[str, Any] = {}
-        if isinstance(regex_hits, dict):
-            merged_hints.update(regex_hits)
-            # If explicit field_evidence not passed, keep backward compatible behaviour.
-            if field_evidence is None:
-                field_evidence = regex_hits
-        elif regex_hits:
-            try:
-                merged_hints.update(dict(regex_hits))
-            except Exception:  # pragma: no cover - defensive
-                pass
-
         if isinstance(field_hints, dict):
             merged_hints.update(field_hints)
 
@@ -220,10 +251,10 @@ class AIFieldMapper:
 
         output_schema = {
             "mappings": {
-                "Alan Adı": {
-                    "value": "<string|null>",
+                "ALAN_ADI": {
+                    "value": None,
                     "confidence": 0.0,
-                    "source": "<kısa kanıt açıklaması>"
+                    "source": ""
                 }
             },
             "overall_confidence": 0.0
@@ -246,8 +277,8 @@ class AIFieldMapper:
             )
 
         prompt_sections.extend([
-            "\nÇIKTI ŞEMASI:\n" + json.dumps(
-                output_schema, ensure_ascii=False, indent=2
+            "\nÇIKTI ŞEMASI (örnek):\n" + json.dumps(
+                output_schema, ensure_ascii=False, separators=(',', ':')
             ),
             "\nOCR METNİ:\n" + ocr_text,
             (
@@ -727,20 +758,168 @@ class AIFieldMapper:
 
     def _safe_json_loads(self, response_text: str) -> Dict[str, Any]:
         """Parse JSON from AI response, handling markdown and extra text."""
-        cleaned_text = self._strip_code_fences(response_text)
-
         try:
-            return json.loads(cleaned_text)
+            return json.loads(response_text)
         except json.JSONDecodeError:
-            extracted_json = self._extract_json_object(cleaned_text)
+            cleaned_text = self._strip_code_fences(response_text)
+            if cleaned_text != response_text:
+                try:
+                    return json.loads(cleaned_text)
+                except json.JSONDecodeError:
+                    pass
+
+            extracted_source = cleaned_text if cleaned_text else response_text
+            extracted_json = self._extract_json_object(extracted_source)
             if extracted_json:
                 return json.loads(extracted_json)
             raise
 
+    def _log_parse_failure(self, response_text: str, error: Exception) -> None:
+        """Log detailed information about JSON parsing issues."""
+        length = len(response_text or "")
+        start_fragment = (response_text or "")[:200]
+        end_fragment = (response_text or "")[-200:] if length > 200 else start_fragment
+
+        logger.error(
+            "JSON parse hatası: %s | Uzunluk=%s | İlk200='%s' | Son200='%s'",
+            error,
+            length,
+            start_fragment.replace("\n", " "),
+            end_fragment.replace("\n", " ")
+        )
+
+    def _extract_evidence_match(self, evidence: Any) -> Optional[str]:
+        """Extract the most reliable textual match from evidence."""
+        if not isinstance(evidence, dict):
+            return None
+
+        matches = evidence.get('matches')
+        if isinstance(matches, list) and matches:
+            return str(matches[0]).strip()
+
+        patterns = evidence.get('patterns')
+        if isinstance(patterns, list):
+            for pattern_info in patterns:
+                if not isinstance(pattern_info, dict):
+                    continue
+                nested_matches = pattern_info.get('matches')
+                if isinstance(nested_matches, list) and nested_matches:
+                    return str(nested_matches[0]).strip()
+
+        value = evidence.get('value')
+        if value not in (None, ""):
+            return str(value).strip()
+
+        return None
+
+    def _evidence_confidence(self, evidence: Any) -> float:
+        """Estimate confidence based on evidence provenance."""
+        if not isinstance(evidence, dict):
+            return 0.6
+
+        source = str(evidence.get('source', '')).lower()
+        pattern = str(evidence.get('pattern', '')).lower()
+
+        base_confidence = 0.6
+
+        if source in {'template', 'regex', 'hint'}:
+            base_confidence = 0.9
+        elif source:
+            base_confidence = 0.8
+
+        if pattern in {'auto_date', 'auto_number'}:
+            base_confidence = max(base_confidence, 0.75)
+
+        patterns = evidence.get('patterns')
+        if isinstance(patterns, list) and patterns:
+            first_pattern = next((p for p in patterns if isinstance(p, dict)), None)
+            if first_pattern:
+                base_confidence = max(base_confidence, self._evidence_confidence(first_pattern))
+
+        return max(0.0, min(base_confidence, 0.95))
+
+    def _describe_evidence_source(self, evidence: Any) -> str:
+        """Create a short human readable description for evidence."""
+        if not isinstance(evidence, dict):
+            return "Ön tespit"
+
+        pattern = str(evidence.get('pattern', '')).lower()
+        source = evidence.get('source')
+
+        if pattern in {'auto_date', 'auto_number'}:
+            return f"Ön tespit ({pattern})"
+
+        if source:
+            return f"Regex eşleşmesi ({source})"
+
+        patterns = evidence.get('patterns')
+        if isinstance(patterns, list):
+            for pattern_info in patterns:
+                description = self._describe_evidence_source(pattern_info)
+                if description:
+                    return description
+
+        return "Regex ön tespiti"
+
+    def _build_partial_mapping_from_evidence(
+        self,
+        template_fields: List[Dict[str, Any]],
+        field_evidence: Optional[Dict[str, Any]],
+        error_msg: str
+    ) -> Dict[str, Any]:
+        """Construct partial mapping results using regex and heuristic evidence."""
+
+        evidence_map = field_evidence or {}
+        field_mappings: Dict[str, Any] = {}
+        confidences: List[float] = []
+
+        for field in template_fields:
+            field_name = field.get('field_name')
+            if not field_name:
+                continue
+
+            metadata = {
+                'data_type': field.get('data_type'),
+                'required': bool(field.get('required', False)),
+                'regex_hint': field.get('regex_hint'),
+                'ocr_psm': field.get('ocr_psm'),
+                'ocr_roi': field.get('ocr_roi')
+            }
+
+            mapping_entry = {
+                'value': None,
+                'confidence': 0.0,
+                'source': 'Bulunamadı',
+                'data_type': field.get('data_type'),
+                'required': bool(field.get('required', False)),
+                'metadata': metadata
+            }
+
+            evidence = evidence_map.get(field_name)
+            value = self._extract_evidence_match(evidence)
+
+            if value:
+                confidence = self._evidence_confidence(evidence)
+                mapping_entry['value'] = value
+                mapping_entry['confidence'] = confidence
+                mapping_entry['source'] = self._describe_evidence_source(evidence)
+                confidences.append(confidence)
+
+            field_mappings[field_name] = mapping_entry
+
+        overall_confidence = sum(confidences) / len(confidences) if confidences else 0.0
+
+        return {
+            'field_mappings': field_mappings,
+            'overall_confidence': overall_confidence,
+            'error': error_msg
+        }
+
     def _parse_ai_response(
         self,
         response_text: str,
-        template_fields: List[Dict[str, Any]]
+        template_fields: List[Dict[str, Any]],
+        field_evidence: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Parse AI response and format for application
@@ -794,11 +973,18 @@ class AIFieldMapper:
                         'metadata': metadata
                     }
 
+            result.pop('error', None)
             return result
 
         except json.JSONDecodeError as e:
-            logger.error(f"JSON parse hatası: {str(e)}\nYanıt: {response_text}")
-            return self._create_empty_mapping(template_fields, "JSON parse hatası")
+            self._log_parse_failure(response_text, e)
+            partial = self._build_partial_mapping_from_evidence(
+                template_fields,
+                field_evidence,
+                "JSON parse hatası"
+            )
+            logger.warning("JSON parse hatası sonrası regex tabanlı kısmi sonuç döndürülüyor")
+            return partial
         except Exception as e:
             logger.error(f"Yanıt işleme hatası: {str(e)}")
             return self._create_empty_mapping(template_fields, str(e))

@@ -40,6 +40,7 @@ const WelcomeWizard = ({ onComplete }) => {
       prev.map(field => ({
         ...field,
         enabled,
+        required: enabled ? true : false,
       }))
     );
   };
