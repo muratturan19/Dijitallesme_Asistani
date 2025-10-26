@@ -5,6 +5,8 @@ import re
 from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
+from app.config import settings
+
 try:  # pragma: no cover - prefer modern OpenAI client
     from openai import OpenAI, AuthenticationError, OpenAIError
 except ImportError:  # pragma: no cover - fallback for legacy client
@@ -23,15 +25,15 @@ logger = logging.getLogger(__name__)
 
 
 class AIFieldMapper:
-    """Uses OpenAI GPT-4 to intelligently map extracted text to template fields"""
+    """Uses OpenAI GPT models (default: gpt-5) to map OCR text to template fields"""
 
-    def __init__(self, api_key: str, model: str = "gpt-4"):
+    def __init__(self, api_key: str, model: str = settings.OPENAI_MODEL):
         """
         Initialize AI field mapper
 
         Args:
             api_key: OpenAI API key
-            model: Model name (default: gpt-4)
+            model: Model name (default: gpt-5)
         """
         self.api_key = api_key
         self.model = model
@@ -77,7 +79,7 @@ class AIFieldMapper:
             )
 
         try:
-            # Build prompt for GPT-4
+            # Build prompt for the configured OpenAI model
             hints = field_hints or {}
             field_context = [
                 self._build_field_context(
