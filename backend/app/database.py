@@ -1,5 +1,16 @@
 # -*- coding: utf-8 -*-
-from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, ForeignKey, JSON, Text
+from sqlalchemy import (
+    create_engine,
+    Column,
+    Integer,
+    String,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    JSON,
+    Text,
+    text,
+)
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
@@ -108,8 +119,27 @@ class ExtractedData(Base):
 
 
 # Create all tables
+def _ensure_column(conn, table: str, column: str, ddl: str) -> None:
+    """Ensure the given column exists in the SQLite table."""
+
+    result = conn.execute(text(f"PRAGMA table_info({table});"))
+    columns = {row[1] for row in result}
+
+    if column not in columns:
+        conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {ddl};"))
+
+
 def init_db():
     Base.metadata.create_all(bind=engine)
+
+    if engine.dialect.name == "sqlite":
+        with engine.begin() as conn:
+            _ensure_column(
+                conn,
+                "template_fields",
+                "regex_hint",
+                "regex_hint VARCHAR(500) NULL",
+            )
 
 
 # Dependency to get DB session
