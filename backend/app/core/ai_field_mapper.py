@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import inspect
 import json
 import logging
 import re
@@ -40,10 +41,23 @@ class AIFieldMapper:
         self._has_valid_api_key = bool(api_key and api_key.strip())
 
         self._client = None
+        self._responses_accepts_response_format = False
+        self._chat_accepts_response_format = False
         if self._has_valid_api_key:
             if OpenAI is not None:
                 # Modern OpenAI client (>=1.0)
                 self._client = OpenAI(api_key=api_key)
+                self._responses_accepts_response_format = self._supports_kwarg(
+                    getattr(getattr(self._client, "responses", None), "create", None),
+                    "response_format",
+                )
+                chat_completions = getattr(
+                    getattr(self._client, "chat", None), "completions", None
+                )
+                self._chat_accepts_response_format = self._supports_kwarg(
+                    getattr(chat_completions, "create", None),
+                    "response_format",
+                )
             else:
                 # Legacy client (<1.0)
                 openai.api_key = api_key
@@ -174,9 +188,14 @@ class AIFieldMapper:
                     request_kwargs = {
                         "model": self.model,
                         "input": response_input,
-                        "response_format": response_format,
                         "temperature": temperature,
                     }
+                    if response_format and self._responses_accepts_response_format:
+                        request_kwargs["response_format"] = response_format
+                    else:
+                        logger.debug(
+                            "response_format desteği olmayan Responses.create kullanımı tespit edildi"
+                        )
                     if max_output_tokens is not None:
                         request_kwargs["max_output_tokens"] = max_output_tokens
 
@@ -185,9 +204,14 @@ class AIFieldMapper:
                     request_kwargs = {
                         "model": self.model,
                         "messages": messages,
-                        "response_format": response_format,
                         "temperature": temperature,
                     }
+                    if response_format and self._chat_accepts_response_format:
+                        request_kwargs["response_format"] = response_format
+                    else:
+                        logger.debug(
+                            "response_format desteği olmayan ChatCompletions.create kullanımı tespit edildi"
+                        )
                     if max_completion_tokens is not None:
                         request_kwargs["max_completion_tokens"] = max_completion_tokens
 
@@ -268,6 +292,24 @@ class AIFieldMapper:
             logger.error(f"AI haritalama hatası: {raw_error}")
             # Return empty mappings with low confidence
             return self._create_empty_mapping(template_fields, user_friendly_error)
+
+    @staticmethod
+    def _supports_kwarg(method: Any, keyword: str) -> bool:
+        """Return True if the given callable accepts the provided keyword."""
+
+        if method is None:
+            return False
+
+        try:
+            signature = inspect.signature(method)
+        except (TypeError, ValueError):  # pragma: no cover - fall back safely
+            return False
+
+        for parameter in signature.parameters.values():
+            if parameter.kind == inspect.Parameter.VAR_KEYWORD:
+                return True
+
+        return keyword in signature.parameters
 
     @staticmethod
     def _safe_dump_response(response: Any) -> str:
