@@ -65,7 +65,7 @@ class TemplateField(Base):
     regex_hint = Column(String(500), nullable=True)
     ocr_psm = Column(Integer, nullable=True)
     ocr_roi = Column(Text, nullable=True)
-    enabled = Column(Boolean, default=True)
+    enabled = Column(Boolean, default=True, nullable=True, server_default=text("1"))
 
     # Relationships
     template = relationship("Template", back_populates="fields")
@@ -151,6 +151,12 @@ def init_db():
                 "template_fields",
                 "ocr_roi",
                 "ocr_roi TEXT NULL",
+            )
+            _ensure_column(
+                conn,
+                "template_fields",
+                "enabled",
+                "enabled BOOLEAN NULL DEFAULT 1",
             )
 
 
