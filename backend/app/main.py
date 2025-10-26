@@ -2,6 +2,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
 import logging
 import os
 import subprocess
@@ -165,21 +166,27 @@ except RuntimeError:
 # Error handlers
 @app.exception_handler(404)
 async def not_found_handler(request, exc):
-    return {
-        "error": "Not Found",
-        "detail": "İstenen kaynak bulunamadı",
-        "path": str(request.url)
-    }
+    return JSONResponse(
+        status_code=404,
+        content={
+            "error": "Not Found",
+            "detail": "İstenen kaynak bulunamadı",
+            "path": str(request.url),
+        },
+    )
 
 
 @app.exception_handler(500)
 async def internal_error_handler(request, exc):
     logger.error(f"Internal server error: {exc}")
-    return {
-        "error": "Internal Server Error",
-        "detail": "Sunucu hatası oluştu",
-        "message": str(exc)
-    }
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": "Internal Server Error",
+            "detail": "Sunucu hatası oluştu",
+            "message": str(exc),
+        },
+    )
 
 
 if __name__ == "__main__":
