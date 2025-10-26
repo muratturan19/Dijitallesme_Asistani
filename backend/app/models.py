@@ -346,6 +346,7 @@ class TemplateUpdate(BaseModel):
 
 class TemplateFieldsUpdate(BaseModel):
     target_fields: List[Dict[str, Any]]
+    name: Optional[str] = None
 
 
 class TemplateResponse(BaseModel):

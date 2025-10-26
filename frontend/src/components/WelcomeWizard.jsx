@@ -16,9 +16,11 @@ const WelcomeWizard = ({ onComplete }) => {
   const [documentId, setDocumentId] = useState(null);
   const [templateId, setTemplateId] = useState(null);
   const [templateFields, setTemplateFields] = useState([]);
+  const [templateName, setTemplateName] = useState('Yeni Şablon');
   const [loading, setLoading] = useState(false);
 
   const hasEnabledFields = templateFields.some(field => field.enabled !== false);
+  const allFieldsSelected = templateFields.length > 0 && templateFields.every(field => field.enabled !== false);
 
   const updateTemplateField = (index, updates) => {
     setTemplateFields(prev =>
@@ -30,6 +32,15 @@ const WelcomeWizard = ({ onComplete }) => {
             }
           : field
       )
+    );
+  };
+
+  const toggleSelectAllFields = (enabled) => {
+    setTemplateFields(prev =>
+      prev.map(field => ({
+        ...field,
+        enabled,
+      }))
     );
   };
 
@@ -73,15 +84,25 @@ const WelcomeWizard = ({ onComplete }) => {
 
     try {
       const result = await uploadTemplateFile(file);
-      setTemplateFields(
-        result.fields.map(field => ({
-          ...field,
-          enabled: field.enabled !== false,
-        }))
-      );
+      const normalizedFields = result.fields.map(field => ({
+        ...field,
+        enabled: field.enabled !== false,
+      }));
+
+      setTemplateFields(normalizedFields);
+
+      const derivedName = file.name
+        ? file.name.replace(/\.[^/.]+$/, '').trim() || 'Yeni Şablon'
+        : 'Yeni Şablon';
+
+      setTemplateName(derivedName);
 
       // Create template in database
-      const template = await createTemplate('Yeni Şablon', result.fields, {});
+      const template = await createTemplate(
+        derivedName || 'Yeni Şablon',
+        result.fields,
+        {}
+      );
       setTemplateId(template.id);
 
       toast.success(`Excel şablonu yüklendi! ${result.field_count} alan bulundu.`);
@@ -114,6 +135,7 @@ const WelcomeWizard = ({ onComplete }) => {
         documentId,
         templateId,
         templateFields,
+        templateName,
         analysisResult: result,
       });
     } catch (error) {
@@ -133,7 +155,10 @@ const WelcomeWizard = ({ onComplete }) => {
 
     try {
       if (templateFields.length > 0) {
-        await updateTemplateFields(templateId, templateFields);
+        const trimmedName = templateName.trim();
+        const effectiveName = trimmedName || 'Yeni Şablon';
+        setTemplateName(effectiveName);
+        await updateTemplateFields(templateId, templateFields, effectiveName);
       }
 
       toast.success('Alan ayarları kaydedildi');
@@ -267,13 +292,31 @@ const WelcomeWizard = ({ onComplete }) => {
 
           {templateFields.length > 0 && (
             <div className="mt-4">
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Şablon Adı</label>
+                <input
+                  type="text"
+                  className="border rounded px-3 py-2 w-full"
+                  value={templateName}
+                  onChange={(e) => setTemplateName(e.target.value)}
+                  placeholder="Örn: Fatura Şablonu"
+                />
+              </div>
               <h3 className="font-medium mb-2">Bulunan Alanlar</h3>
               <div className="overflow-x-auto border border-gray-200 rounded-lg">
                 <table className="min-w-full divide-y divide-gray-200">
                   <thead className="bg-gray-50">
                     <tr>
                       <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        Dahil
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            className="rounded"
+                            checked={allFieldsSelected}
+                            onChange={(e) => toggleSelectAllFields(e.target.checked)}
+                          />
+                          <span>Tümünü Seç</span>
+                        </div>
                       </th>
                       <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Alan Adı
@@ -392,6 +435,10 @@ const WelcomeWizard = ({ onComplete }) => {
             <div className="flex items-center justify-between mb-2">
               <span className="text-gray-600">Excel Şablonu:</span>
               <span className="font-medium">{templateFile?.name}</span>
+            </div>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-gray-600">Şablon Adı:</span>
+              <span className="font-medium">{templateName}</span>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-gray-600">Alan Sayısı:</span>

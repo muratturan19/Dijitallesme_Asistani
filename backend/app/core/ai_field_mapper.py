@@ -121,7 +121,7 @@ class AIFieldMapper:
                     model=self.model,
                     messages=messages,
                     temperature=0.1,
-                    max_tokens=2000
+                    max_completion_tokens=2000
                 )
                 ai_message = response.choices[0].message.content
             else:

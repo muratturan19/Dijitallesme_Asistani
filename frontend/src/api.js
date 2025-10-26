@@ -129,10 +129,16 @@ export const saveTemplate = async (templateId, name, confirmedMapping, targetFie
   return response.data;
 };
 
-export const updateTemplateFields = async (templateId, targetFields) => {
-  const response = await api.put(`/api/template/${templateId}/fields`, {
+export const updateTemplateFields = async (templateId, targetFields, name) => {
+  const payload = {
     target_fields: prepareTargetFields(targetFields),
-  });
+  };
+
+  if (name && name.trim()) {
+    payload.name = name.trim();
+  }
+
+  const response = await api.put(`/api/template/${templateId}/fields`, payload);
 
   return response.data;
 };

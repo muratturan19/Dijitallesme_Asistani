@@ -287,9 +287,14 @@ async def update_template_fields(
     """Update template field configuration."""
     try:
         template_manager = TemplateManager(db)
+        updates = {'target_fields': payload.target_fields}
+
+        if payload.name is not None:
+            updates['name'] = payload.name
+
         template = template_manager.update_template(
             template_id,
-            {'target_fields': payload.target_fields}
+            updates
         )
 
         if not template:
