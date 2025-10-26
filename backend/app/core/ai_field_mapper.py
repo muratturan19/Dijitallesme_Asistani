@@ -118,15 +118,17 @@ class AIFieldMapper:
             )
 
             source = (ocr_data or {}).get('source', 'unknown') if ocr_data else 'unknown'
-            max_completion_tokens = 2000
+            is_reasoning_model = str(self.model).startswith("gpt-5")
+            max_completion_tokens = None if is_reasoning_model else 2000
+            max_output_tokens = 20000 if is_reasoning_model else None
             temperature = 1.0
             response_format = {"type": "json_object"}
 
             logger.info(
-                "AI eşleme çağrısı: model=%s, response_format=%s, max_completion_tokens=%s, temperature=%s",
+                "AI eşleme çağrısı: model=%s, response_format=%s, token_limit=%s, temperature=%s",
                 self.model,
                 response_format.get('type'),
-                max_completion_tokens,
+                max_output_tokens if is_reasoning_model else max_completion_tokens,
                 temperature,
             )
             logger.info("OCR kaynağı: %s", source)
@@ -155,20 +157,29 @@ class AIFieldMapper:
 
             logger.info("OpenAI API çağrısı hazırlanıyor...")
             if self._client is not None:
-                response = self._client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    response_format=response_format,
-                    max_completion_tokens=max_completion_tokens,
-                    temperature=temperature
-                )
+                request_kwargs = {
+                    "model": self.model,
+                    "messages": messages,
+                    "response_format": response_format,
+                    "temperature": temperature,
+                }
+                if is_reasoning_model and max_output_tokens is not None:
+                    request_kwargs["max_output_tokens"] = max_output_tokens
+                elif max_completion_tokens is not None:
+                    request_kwargs["max_completion_tokens"] = max_completion_tokens
+
+                response = self._client.chat.completions.create(**request_kwargs)
             else:
-                response = openai.ChatCompletion.create(
-                    model=self.model,
-                    messages=messages,
-                    max_tokens=max_completion_tokens,
-                    temperature=temperature
-                )
+                request_kwargs = {
+                    "model": self.model,
+                    "messages": messages,
+                    "temperature": temperature,
+                }
+                token_limit = max_output_tokens if is_reasoning_model else max_completion_tokens
+                if token_limit is not None:
+                    request_kwargs["max_tokens"] = token_limit
+
+                response = openai.ChatCompletion.create(**request_kwargs)
 
             logger.info(
                 "OpenAI yanıtı alındı: response_type=%s, has_choices=%s",
