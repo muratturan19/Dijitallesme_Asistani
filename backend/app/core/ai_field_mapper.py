@@ -102,7 +102,7 @@ class AIFieldMapper:
 
             source = (ocr_data or {}).get('source', 'unknown') if ocr_data else 'unknown'
             max_completion_tokens = 2000
-            temperature = 0.0
+            temperature = 1.0
             response_format = {"type": "json_object"}
 
             logger.info(
