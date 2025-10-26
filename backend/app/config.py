@@ -13,7 +13,7 @@ class Settings:
 
     # OpenAI Configuration
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
-    OPENAI_MODEL: str = "gpt-4"
+    OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-5")
 
     # Database Configuration
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./digitalization.db")
