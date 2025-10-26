@@ -155,20 +155,43 @@ class AIFieldMapper:
                 }
             ]
 
+            response_input = [
+                {
+                    "role": msg.get("role", "user"),
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": str(msg.get("content", ""))
+                        }
+                    ],
+                }
+                for msg in messages
+            ]
+
             logger.info("OpenAI API çağrısı hazırlanıyor...")
             if self._client is not None:
-                request_kwargs = {
-                    "model": self.model,
-                    "messages": messages,
-                    "response_format": response_format,
-                    "temperature": temperature,
-                }
-                if is_reasoning_model and max_output_tokens is not None:
-                    request_kwargs["max_output_tokens"] = max_output_tokens
-                elif max_completion_tokens is not None:
-                    request_kwargs["max_completion_tokens"] = max_completion_tokens
+                if is_reasoning_model:
+                    request_kwargs = {
+                        "model": self.model,
+                        "input": response_input,
+                        "response_format": response_format,
+                        "temperature": temperature,
+                    }
+                    if max_output_tokens is not None:
+                        request_kwargs["max_output_tokens"] = max_output_tokens
 
-                response = self._client.chat.completions.create(**request_kwargs)
+                    response = self._client.responses.create(**request_kwargs)
+                else:
+                    request_kwargs = {
+                        "model": self.model,
+                        "messages": messages,
+                        "response_format": response_format,
+                        "temperature": temperature,
+                    }
+                    if max_completion_tokens is not None:
+                        request_kwargs["max_completion_tokens"] = max_completion_tokens
+
+                    response = self._client.chat.completions.create(**request_kwargs)
             else:
                 request_kwargs = {
                     "model": self.model,
@@ -280,6 +303,51 @@ class AIFieldMapper:
         if response is None:
             logger.info("_extract_ai_message: response nesnesi None geldi")
             return None
+
+        output_text = getattr(response, "output_text", None)
+        if output_text:
+            text = str(output_text).strip()
+            if text:
+                logger.info(
+                    "_extract_ai_message: output_text alanı kullanıldı (uzunluk=%s)",
+                    len(text),
+                )
+                return text
+
+        output_items = getattr(response, "output", None)
+        if output_items:
+            parts: List[str] = []
+            for item in output_items:
+                content = getattr(item, "content", None)
+                if content is None and isinstance(item, dict):
+                    content = item.get("content")
+
+                if not content:
+                    continue
+
+                for piece in content:
+                    if isinstance(piece, dict):
+                        text_part = piece.get("text") or piece.get("value")
+                        if text_part:
+                            parts.append(str(text_part))
+                            continue
+                        if piece.get("type") == "output_text" and piece.get("text"):
+                            parts.append(str(piece.get("text")))
+                            continue
+
+                    text_attr = getattr(piece, "text", None)
+                    if text_attr:
+                        parts.append(str(text_attr))
+
+            if parts:
+                joined = "".join(parts).strip()
+                if joined:
+                    logger.info(
+                        "_extract_ai_message: output alanı işlendi (öğe_sayısı=%s, uzunluk=%s)",
+                        len(output_items),
+                        len(joined),
+                    )
+                    return joined
 
         try:
             choices = response.choices  # type: ignore[attr-defined]
