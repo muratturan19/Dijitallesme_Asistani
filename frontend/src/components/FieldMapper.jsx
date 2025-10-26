@@ -4,8 +4,10 @@ import { saveTemplate } from '../api';
 
 const FieldMapper = ({ data, onNext, onBack }) => {
   const [templateName, setTemplateName] = useState('Yeni Şablon');
-  const [mappings, setMappings] = useState(data.analysisResult.suggested_mapping);
+  const [mappings, setMappings] = useState(() => data.analysisResult?.suggested_mapping || {});
   const [loading, setLoading] = useState(false);
+  const analysisError = data.analysisResult?.error;
+  const overallConfidence = data.analysisResult?.overall_confidence || 0;
   const [fieldConfigs, setFieldConfigs] = useState(() => {
     if (Array.isArray(data.templateFields) && data.templateFields.length > 0) {
       return data.templateFields.map(field => ({
@@ -14,7 +16,7 @@ const FieldMapper = ({ data, onNext, onBack }) => {
       }));
     }
 
-    return Object.keys(data.analysisResult.suggested_mapping || {}).map(fieldName => ({
+    return Object.keys(data.analysisResult?.suggested_mapping || {}).map(fieldName => ({
       field_name: fieldName,
       data_type: 'text',
       required: false,
@@ -33,6 +35,12 @@ const FieldMapper = ({ data, onNext, onBack }) => {
       );
     }
   }, [data.templateFields]);
+
+  useEffect(() => {
+    if (data.analysisResult?.suggested_mapping) {
+      setMappings(data.analysisResult.suggested_mapping);
+    }
+  }, [data.analysisResult?.suggested_mapping]);
 
   const activeFieldNames = useMemo(() => {
     return new Set(
@@ -158,6 +166,13 @@ const FieldMapper = ({ data, onNext, onBack }) => {
     <div className="max-w-6xl mx-auto p-6">
       <h1 className="text-3xl font-bold text-gray-800 mb-2">Alan Eşleştirme</h1>
       <p className="text-gray-600 mb-6">AI tarafından çıkarılan verileri kontrol edin ve düzeltin</p>
+
+      {analysisError && (
+        <div className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4 text-red-700">
+          <strong className="block font-semibold mb-1">AI eşleme sırasında hata</strong>
+          <span>{analysisError}</span>
+        </div>
+      )}
 
       {/* Template Name */}
       <div className="card mb-6">
@@ -332,17 +347,17 @@ const FieldMapper = ({ data, onNext, onBack }) => {
           <div className="flex-1 bg-gray-200 rounded-full h-4 mr-4">
             <div
               className={`h-4 rounded-full ${
-                data.analysisResult.overall_confidence >= 0.8
+                overallConfidence >= 0.8
                   ? 'bg-green-500'
-                  : data.analysisResult.overall_confidence >= 0.5
+                  : overallConfidence >= 0.5
                   ? 'bg-yellow-500'
                   : 'bg-red-500'
               }`}
-              style={{ width: `${data.analysisResult.overall_confidence * 100}%` }}
+              style={{ width: `${overallConfidence * 100}%` }}
             ></div>
           </div>
           <span className="text-xl font-bold">
-            {(data.analysisResult.overall_confidence * 100).toFixed(1)}%
+            {(overallConfidence * 100).toFixed(1)}%
           </span>
         </div>
       </div>
