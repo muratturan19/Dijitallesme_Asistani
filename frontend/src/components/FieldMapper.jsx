@@ -3,7 +3,7 @@ import { toast } from 'react-toastify';
 import { saveTemplate } from '../api';
 
 const FieldMapper = ({ data, onNext, onBack }) => {
-  const [templateName, setTemplateName] = useState('Yeni Şablon');
+  const [templateName, setTemplateName] = useState(data.templateName || 'Yeni Şablon');
   const [mappings, setMappings] = useState(() => data.analysisResult?.suggested_mapping || {});
   const [loading, setLoading] = useState(false);
   const analysisError = data.analysisResult?.error;
@@ -41,6 +41,12 @@ const FieldMapper = ({ data, onNext, onBack }) => {
       setMappings(data.analysisResult.suggested_mapping);
     }
   }, [data.analysisResult?.suggested_mapping]);
+
+  useEffect(() => {
+    if (data.templateName) {
+      setTemplateName(data.templateName);
+    }
+  }, [data.templateName]);
 
   const activeFieldNames = useMemo(() => {
     return new Set(
@@ -90,13 +96,15 @@ const FieldMapper = ({ data, onNext, onBack }) => {
 
   const handleSave = async () => {
     setLoading(true);
+    const trimmedName = templateName.trim() || 'Yeni Şablon';
+    setTemplateName(trimmedName);
 
     try {
-      await saveTemplate(data.templateId, templateName, mappings, fieldConfigs);
+      await saveTemplate(data.templateId, trimmedName, mappings, fieldConfigs);
       toast.success('Şablon kaydedildi!');
       onNext({
         ...data,
-        templateName,
+        templateName: trimmedName,
         confirmedMapping: mappings,
         templateFields: fieldConfigs,
       });
