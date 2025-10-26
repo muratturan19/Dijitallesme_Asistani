@@ -144,7 +144,6 @@ class AIFieldMapper:
                     max_completion_tokens=max_completion_tokens,
                     temperature=temperature
                 )
-                ai_message = response.choices[0].message.content
             else:
                 response = openai.ChatCompletion.create(
                     model=self.model,
@@ -152,7 +151,8 @@ class AIFieldMapper:
                     max_tokens=max_completion_tokens,
                     temperature=temperature
                 )
-                ai_message = response.choices[0].message.content
+
+            ai_message = self._extract_ai_message(response)
 
             if not ai_message:
                 logger.error("OpenAI'den boş yanıt alındı")
@@ -200,6 +200,75 @@ class AIFieldMapper:
             logger.error(f"AI haritalama hatası: {raw_error}")
             # Return empty mappings with low confidence
             return self._create_empty_mapping(template_fields, user_friendly_error)
+
+    @staticmethod
+    def _extract_ai_message(response: Any) -> Optional[str]:
+        """Return the textual message content from an OpenAI response."""
+
+        if response is None:
+            return None
+
+        try:
+            choices = response.choices  # type: ignore[attr-defined]
+        except AttributeError:
+            choices = response.get('choices') if isinstance(response, dict) else None
+
+        if not choices:
+            return None
+
+        try:
+            choice = choices[0]
+        except (IndexError, TypeError):
+            return None
+
+        message = getattr(choice, 'message', None)
+        if message is None and isinstance(choice, dict):
+            message = choice.get('message')
+
+        if message is None:
+            return None
+
+        parsed = getattr(message, 'parsed', None)
+        if parsed is None and isinstance(message, dict):
+            parsed = message.get('parsed')
+
+        if parsed is not None:
+            if isinstance(parsed, (dict, list)):
+                try:
+                    return json.dumps(parsed, ensure_ascii=False)
+                except TypeError:
+                    return str(parsed)
+            return str(parsed)
+
+        content = getattr(message, 'content', None)
+        if content is None and isinstance(message, dict):
+            content = message.get('content')
+
+        if isinstance(content, str):
+            return content.strip()
+
+        if isinstance(content, list):
+            parts: List[str] = []
+            for item in content:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict):
+                    text = item.get('text')
+                    if text:
+                        parts.append(str(text))
+                else:
+                    text = getattr(item, 'text', None)
+                    if text:
+                        parts.append(str(text))
+            if parts:
+                return ''.join(parts).strip()
+            return None
+
+        if content is not None:
+            text = str(content).strip()
+            return text or None
+
+        return None
 
     def _build_mapping_prompt(
         self,
