@@ -155,19 +155,48 @@ class AIFieldMapper:
             logger.error("OpenAI API hatası: %s", str(e))
             return self._create_empty_mapping(template_fields, str(e))
         except Exception as e:
-            logger.error(f"AI haritalama hatası: {str(e)}")
+            raw_error = str(e)
+            user_friendly_error = raw_error
+            if 'field_hints' in raw_error and '_build_mapping_prompt' in raw_error:
+                user_friendly_error = 'field_hints parametresi uyumsuz. Lütfen tekrar deneyin.'
+
+            logger.error(f"AI haritalama hatası: {raw_error}")
             # Return empty mappings with low confidence
-            return self._create_empty_mapping(template_fields, str(e))
+            return self._create_empty_mapping(template_fields, user_friendly_error)
 
     def _build_mapping_prompt(
         self,
         ocr_text: str,
         template_fields: List[Dict[str, Any]],
-        field_evidence: Optional[Dict[str, Any]] = None
+        regex_hits: Optional[Dict[str, Any]] = None,
+        field_hints: Optional[Dict[str, Any]] = None,
+        **kwargs: Any
     ) -> str:
         """Build the deterministic mapping prompt with full instructions and metadata."""
 
-        field_context = [self._build_field_context(field) for field in template_fields]
+        # Accept historical call signatures gracefully.
+        field_evidence: Optional[Dict[str, Any]] = kwargs.get('field_evidence')
+
+        # Merge hints provided by previous "regex_hits" argument and the new "field_hints".
+        merged_hints: Dict[str, Any] = {}
+        if isinstance(regex_hits, dict):
+            merged_hints.update(regex_hits)
+            # If explicit field_evidence not passed, keep backward compatible behaviour.
+            if field_evidence is None:
+                field_evidence = regex_hits
+        elif regex_hits:
+            try:
+                merged_hints.update(dict(regex_hits))
+            except Exception:  # pragma: no cover - defensive
+                pass
+
+        if isinstance(field_hints, dict):
+            merged_hints.update(field_hints)
+
+        if template_fields and all('name' in field for field in template_fields):
+            field_context = template_fields
+        else:
+            field_context = [self._build_field_context(field) for field in template_fields]
 
         instruction_block = (
             "Amaç: OCR çıktısından hedef alan değerlerini tespit etmek, verilen "
@@ -211,10 +240,10 @@ class AIFieldMapper:
             )
         ]
 
-        if field_hints:
+        if merged_hints:
             prompt_sections.append(
                 "\nALAN KURALLARI:\n" + json.dumps(
-                    field_hints, ensure_ascii=False, indent=2
+                    merged_hints, ensure_ascii=False, indent=2
                 )
             )
 

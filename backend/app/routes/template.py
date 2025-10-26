@@ -204,18 +204,30 @@ async def analyze_document(
 
         logger.info(f"Analiz tamamlandı: Belge {document.id}")
 
-        return {
+        error_message = mapping_result.get('error')
+
+        response_payload = {
             'suggested_mapping': suggested_mapping,
             'ocr_text': ocr_result['text'],
             'overall_confidence': mapping_result['overall_confidence'],
             'word_count': ocr_result.get('word_count', 0),
             'extraction_source': ocr_result.get('source', 'ocr'),
             'applied_rules': applied_rules,
-            'message': (
+            'error': error_message
+        }
+
+        if error_message:
+            response_payload['message'] = (
+                'Analiz uyarı ile tamamlandı: '
+                f"{error_message}"
+            )
+        else:
+            response_payload['message'] = (
                 'Analiz başarıyla tamamlandı - kaynak: '
                 f"{ocr_result.get('source', 'ocr')}"
             )
-        }
+
+        return response_payload
 
     except HTTPException:
         raise

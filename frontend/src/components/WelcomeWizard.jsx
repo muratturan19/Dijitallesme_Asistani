@@ -103,7 +103,11 @@ const WelcomeWizard = ({ onComplete }) => {
 
     try {
       const result = await analyzeDocument(documentId, templateId);
-      toast.success('Analiz tamamlandı!');
+      if (result.error) {
+        toast.warn(`AI eşleme sırasında hata: ${result.error}`);
+      } else {
+        toast.success('Analiz tamamlandı!');
+      }
 
       // Pass results to next step
       onComplete({
