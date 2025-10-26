@@ -1,16 +1,16 @@
 # Dijitalleşme Asistanı
 
-AI destekli belge dijitalleştirme ve veri çıkarma sistemi. Kullanıcılar bir örnek belge ve Excel şablonu yükleyerek sisteme "öğretir", ardından toplu belgeleri otomatik olarak işler.
+AI destekli belge dijitalleştirme ve veri çıkarma sistemi. Kullanıcılar bir örnek belge ve Excel şablonu yükleyerek sisteme "öğretir", ardından toplu belgeleri otomatik olarak işler. Sistem, Türkçe ve İngilizce belgelerdeki özel karakterleri doğru şekilde işleyerek iki dilde de güvenilir sonuçlar üretir.
 
 ## Özellikler
 
 - 📄 **OCR ile Metin Çıkarma**: Tesseract kullanarak PDF ve görüntülerden metin çıkarma
-- 🤖 **AI Tabanlı Alan Eşleştirme**: OpenAI GPT-4 ile akıllı alan tanıma
+- 🤖 **AI Tabanlı Alan Eşleştirme**: OPENAI_MODEL ortam değişkeniyle seçilebilen OpenAI modelleri (varsayılan `gpt-5`) ile akıllı alan tanıma
 - 📊 **Özelleştirilebilir Şablonlar**: Excel şablonları ile kendi alanlarınızı tanımlayın
 - 🔄 **Toplu İşleme**: Yüzlerce belgeyi aynı anda işleyin
 - ✅ **Güven Skorları**: Düşük güvenilirlikte alanları gözden geçirin
 - 📁 **Excel Dışa Aktarma**: Sonuçları Excel formatında indirin
-- 🇹🇷 **Türkçe Destek**: Tam UTF-8 ve Türkçe karakter desteği
+- 🌐 **İki Dilli Destek**: Türkçe ve İngilizce belgeler için tam UTF-8 karakter desteği ve dil odaklı işleme yetenekleri
 
 ## Teknoloji Stack
 
@@ -18,7 +18,7 @@ AI destekli belge dijitalleştirme ve veri çıkarma sistemi. Kullanıcılar bir
 - **Framework**: Python 3.13, FastAPI
 - **OCR**: Tesseract (pytesseract)
 - **Görüntü İşleme**: Pillow, OpenCV
-- **AI**: OpenAI GPT-4 API
+- **AI**: OPENAI_MODEL ortam değişkeniyle seçilen OpenAI sohbet modeli (varsayılan `gpt-5`)
 - **Veritabanı**: SQLite (SQLAlchemy)
 - **Excel**: openpyxl
 
@@ -51,10 +51,11 @@ cd Dijitallesme_Asistani
 cp .env.example .env
 ```
 
-`.env` dosyasını düzenleyin ve gerekli bilgileri girin:
+`.env` dosyasını düzenleyin ve gerekli bilgileri girin. `OPENAI_MODEL` ayarı ile erişebildiğiniz OpenAI sohbet modelini seçebilir, varsayılan olarak `gpt-5` kullanabilirsiniz:
 
 ```env
 OPENAI_API_KEY=your_openai_api_key_here
+OPENAI_MODEL=gpt-5
 TESSERACT_CMD=C:\Program Files\Tesseract-OCR\tesseract.exe  # Windows
 ```
 
