@@ -79,6 +79,11 @@ class AIFieldMapper:
             )
 
         try:
+            logger.info(
+                "AI alan eşleme süreci başladı: field_count=%s, ocr_text_length=%s",
+                len(template_fields),
+                len(ocr_text or "")
+            )
             # Build prompt for the configured OpenAI model
             hints = field_hints or {}
             field_context = [
@@ -98,6 +103,18 @@ class AIFieldMapper:
                 field_context,
                 field_evidence=field_evidence if field_evidence else None,
                 field_hints=self._summarize_field_hints(hints)
+            )
+
+            logger.info(
+                "AI istemci konfigürasyonu hazır: client_type=%s, hints=%s, regex_hits=%s",
+                "modern" if self._client is not None else "legacy",
+                len(hints),
+                len(field_evidence or {})
+            )
+            logger.info(
+                "Oluşturulan prompt özeti: uzunluk=%s, ilk_200_karakter=%s",
+                len(prompt),
+                prompt[:200]
             )
 
             source = (ocr_data or {}).get('source', 'unknown') if ocr_data else 'unknown'
@@ -136,6 +153,7 @@ class AIFieldMapper:
                 }
             ]
 
+            logger.info("OpenAI API çağrısı hazırlanıyor...")
             if self._client is not None:
                 response = self._client.chat.completions.create(
                     model=self.model,
@@ -152,10 +170,26 @@ class AIFieldMapper:
                     temperature=temperature
                 )
 
+            logger.info(
+                "OpenAI yanıtı alındı: response_type=%s, has_choices=%s",
+                type(response).__name__,
+                bool(getattr(response, 'choices', None) or (
+                    isinstance(response, dict) and response.get('choices')
+                ))
+            )
+            logger.debug(
+                "OpenAI yanıtı ham veri özeti: %s",
+                self._safe_dump_response(response)
+            )
+
             ai_message = self._extract_ai_message(response)
 
             if not ai_message:
                 logger.error("OpenAI'den boş yanıt alındı")
+                logger.error(
+                    "Boş yanıt hatası için OpenAI response içeriği: %s",
+                    self._safe_dump_response(response)
+                )
                 return self._create_empty_mapping(
                     template_fields,
                     "OpenAI'den geçerli yanıt alınamadı"
@@ -202,10 +236,38 @@ class AIFieldMapper:
             return self._create_empty_mapping(template_fields, user_friendly_error)
 
     @staticmethod
+    def _safe_dump_response(response: Any) -> str:
+        """Safely serialize OpenAI response objects for logging."""
+
+        if response is None:
+            return "<empty response>"
+
+        try:
+            model_dump = getattr(response, "model_dump", None)
+            if callable(model_dump):
+                dumped = model_dump()
+                return json.dumps(dumped, ensure_ascii=False, default=str)[:4000]
+        except Exception as exc:  # pragma: no cover - defensive logging path
+            logger.debug("OpenAI yanıtı model_dump sırasında hata: %s", exc)
+
+        try:
+            return json.dumps(response, ensure_ascii=False, default=str)[:4000]
+        except TypeError:
+            try:
+                response_dict = getattr(response, "__dict__", None)
+                if response_dict:
+                    return json.dumps(response_dict, ensure_ascii=False, default=str)[:4000]
+            except Exception:  # pragma: no cover - defensive
+                pass
+
+        return repr(response)[:4000]
+
+    @staticmethod
     def _extract_ai_message(response: Any) -> Optional[str]:
         """Return the textual message content from an OpenAI response."""
 
         if response is None:
+            logger.info("_extract_ai_message: response nesnesi None geldi")
             return None
 
         try:
@@ -214,11 +276,16 @@ class AIFieldMapper:
             choices = response.get('choices') if isinstance(response, dict) else None
 
         if not choices:
+            logger.info(
+                "_extract_ai_message: choices alanı bulunamadı veya boş. response_türü=%s",
+                type(response).__name__
+            )
             return None
 
         try:
             choice = choices[0]
         except (IndexError, TypeError):
+            logger.info("_extract_ai_message: choices[0] alınamadı")
             return None
 
         message = getattr(choice, 'message', None)
@@ -226,6 +293,7 @@ class AIFieldMapper:
             message = choice.get('message')
 
         if message is None:
+            logger.info("_extract_ai_message: message alanı bulunamadı")
             return None
 
         parsed = getattr(message, 'parsed', None)
@@ -233,6 +301,7 @@ class AIFieldMapper:
             parsed = message.get('parsed')
 
         if parsed is not None:
+            logger.info("_extract_ai_message: parsed içerik bulundu, tip=%s", type(parsed).__name__)
             if isinstance(parsed, (dict, list)):
                 try:
                     return json.dumps(parsed, ensure_ascii=False)
@@ -245,9 +314,11 @@ class AIFieldMapper:
             content = message.get('content')
 
         if isinstance(content, str):
+            logger.info("_extract_ai_message: content string olarak bulundu (uzunluk=%s)", len(content))
             return content.strip()
 
         if isinstance(content, list):
+            logger.info("_extract_ai_message: content list olarak bulundu (öğe_sayısı=%s)", len(content))
             parts: List[str] = []
             for item in content:
                 if isinstance(item, str):
@@ -294,6 +365,7 @@ class AIFieldMapper:
 
         if content is not None:
             text = str(content).strip()
+            logger.info("_extract_ai_message: content diğer tipten stringe çevrildi (uzunluk=%s)", len(text))
             return text or None
 
         return None
