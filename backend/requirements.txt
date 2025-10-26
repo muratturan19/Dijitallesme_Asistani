@@ -10,3 +10,4 @@ openpyxl
 openai
 python-dotenv
 aiofiles
+alembic

@@ -3,6 +3,11 @@ from pydantic import BaseModel, Field, root_validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
+try:  # pragma: no cover - compatibility shim
+    from pydantic import ConfigDict  # type: ignore
+except ImportError:  # pragma: no cover - Pydantic v1 fallback
+    ConfigDict = None  # type: ignore
+
 
 class OCRSettings(BaseModel):
     """Structured OCR preferences that can override engine behaviour."""
@@ -313,8 +318,8 @@ class TemplateFieldCreate(BaseModel):
     calculated: bool = False
     calculation_rule: Optional[str] = None
     regex_hint: Optional[str] = None
-    ocr_psm: Optional[str] = None
-    ocr_roi: Optional[Any] = None
+    ocr_psm: Optional[int] = None
+    ocr_roi: Optional[str] = None
     enabled: bool = True
 
 
@@ -438,8 +443,11 @@ class SaveTemplateRequest(BaseModel):
     confirmed_rules: TemplateExtractionRules = Field(..., alias='confirmed_mapping')
     target_fields: Optional[List[Dict[str, Any]]] = None
 
-    class Config:
-        allow_population_by_field_name = True
+    if ConfigDict is not None:
+        model_config = ConfigDict(populate_by_name=True)
+    else:  # pragma: no cover - compatibility path for Pydantic v1
+        class Config:  # type: ignore
+            allow_population_by_field_name = True
 
 
 class TestTemplateRequest(BaseModel):

@@ -9,6 +9,59 @@ const api = axios.create({
   },
 });
 
+const normalizeOcrPsm = (value) => {
+  if (value === undefined || value === null) {
+    return null;
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed || trimmed.toLowerCase() === 'null' || trimmed.toLowerCase() === 'none') {
+      return null;
+    }
+
+    const numeric = Number(trimmed);
+    return Number.isFinite(numeric) ? numeric : null;
+  }
+
+  return Number.isFinite(value) ? value : null;
+};
+
+const normalizeOcrRoi = (value) => {
+  if (value === undefined || value === null) {
+    return null;
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed || trimmed.toLowerCase() === 'null' || trimmed.toLowerCase() === 'none') {
+      return null;
+    }
+
+    return trimmed;
+  }
+
+  return value;
+};
+
+const prepareTargetFields = (fields) => {
+  if (!Array.isArray(fields)) {
+    return fields;
+  }
+
+  return fields.map((field) => {
+    if (typeof field !== 'object' || field === null) {
+      return field;
+    }
+
+    return {
+      ...field,
+      ocr_psm: normalizeOcrPsm(field.ocr_psm),
+      ocr_roi: normalizeOcrRoi(field.ocr_roi),
+    };
+  });
+};
+
 // Upload API
 export const uploadSampleDocument = async (file) => {
   const formData = new FormData();
@@ -70,7 +123,7 @@ export const saveTemplate = async (templateId, name, confirmedMapping, targetFie
     template_id: templateId,
     name,
     confirmed_mapping: confirmedMapping,
-    target_fields: targetFields,
+    target_fields: prepareTargetFields(targetFields),
   });
 
   return response.data;
@@ -78,7 +131,7 @@ export const saveTemplate = async (templateId, name, confirmedMapping, targetFie
 
 export const updateTemplateFields = async (templateId, targetFields) => {
   const response = await api.put(`/api/template/${templateId}/fields`, {
-    target_fields: targetFields,
+    target_fields: prepareTargetFields(targetFields),
   });
 
   return response.data;
@@ -98,7 +151,7 @@ export const testTemplate = async (documentId, templateId) => {
 export const createTemplate = async (name, targetFields, extractionRules) => {
   const response = await api.post('/api/template/create', {
     name,
-    target_fields: targetFields,
+    target_fields: prepareTargetFields(targetFields),
     extraction_rules: extractionRules,
   });
 

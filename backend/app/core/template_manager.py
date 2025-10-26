@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import json
 import openpyxl
 import logging
 from typing import List, Dict, Any, Optional, Union
@@ -116,6 +117,84 @@ class TemplateManager:
             }
         return {}
 
+    @staticmethod
+    def _to_bool(value: Any, default: bool = False) -> bool:
+        if isinstance(value, bool):
+            return value
+
+        if value in (None, ""):
+            return default
+
+        if isinstance(value, str):
+            lowered = value.strip().lower()
+            if lowered in {"true", "1", "yes", "on"}:
+                return True
+            if lowered in {"false", "0", "no", "off"}:
+                return False
+
+        return bool(value)
+
+    @staticmethod
+    def _normalize_ocr_psm(value: Any) -> Optional[int]:
+        if value in (None, "", "null", "None"):
+            return None
+
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            logger.warning("OCR PSM değeri sayı olarak parse edilemedi: %s", value)
+            return None
+
+    @staticmethod
+    def _normalize_ocr_roi(value: Any) -> Optional[str]:
+        if value in (None, "", "null", "None"):
+            return None
+
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped.lower() in {"null", "none", ""}:
+                return None
+            return stripped
+
+        try:
+            return json.dumps(value, ensure_ascii=False)
+        except (TypeError, ValueError):
+            logger.warning("OCR ROI değeri serileştirilemedi, metne çevriliyor: %s", value)
+            return str(value)
+
+    def _normalize_field(self, field_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        if not isinstance(field_data, dict):
+            return None
+
+        normalized = dict(field_data)
+
+        field_name = str(normalized.get('field_name', '')).strip()
+        if not field_name:
+            return None
+
+        normalized['field_name'] = field_name
+        data_type = normalized.get('data_type', 'text') or 'text'
+        normalized['data_type'] = str(data_type).lower()
+        normalized['required'] = self._to_bool(normalized.get('required'), False)
+        normalized['calculated'] = self._to_bool(normalized.get('calculated'), False)
+        normalized['enabled'] = self._to_bool(normalized.get('enabled'), True)
+        normalized['calculation_rule'] = normalized.get('calculation_rule') or None
+        normalized['regex_hint'] = normalized.get('regex_hint') or None
+        normalized['ocr_psm'] = self._normalize_ocr_psm(normalized.get('ocr_psm'))
+        normalized['ocr_roi'] = self._normalize_ocr_roi(normalized.get('ocr_roi'))
+
+        return normalized
+
+    def _normalize_fields(self, fields: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        normalized_fields: List[Dict[str, Any]] = []
+
+        for field_data in fields or []:
+            normalized = self._normalize_field(field_data)
+            if normalized:
+                normalized_fields.append(normalized)
+
+        return normalized_fields
+
     def create_template(
         self,
         name: str,
@@ -136,12 +215,7 @@ class TemplateManager:
             Created Template object
         """
         try:
-            normalized_fields = []
-            for field_data in fields:
-                normalized_fields.append({
-                    **field_data,
-                    'enabled': field_data.get('enabled', True)
-                })
+            normalized_fields = self._normalize_fields(fields)
 
             # Create template
             template = Template(
@@ -165,7 +239,7 @@ class TemplateManager:
                     calculated=field_data.get('calculated', False),
                     calculation_rule=field_data.get('calculation_rule'),
                     regex_hint=field_data.get('regex_hint'),
-                    ocr_psm=str(field_data.get('ocr_psm')) if field_data.get('ocr_psm') is not None else None,
+                    ocr_psm=field_data.get('ocr_psm'),
                     ocr_roi=field_data.get('ocr_roi'),
                     enabled=field_data.get('enabled', True)
                 )
@@ -245,18 +319,12 @@ class TemplateManager:
             # Update fields
             for key, value in updates.items():
                 if key == 'target_fields' and isinstance(value, list):
-                    normalized_fields = []
+                    normalized_fields = self._normalize_fields(value)
                     self.db.query(TemplateField).filter(
                         TemplateField.template_id == template_id
                     ).delete(synchronize_session=False)
 
-                    for field_data in value:
-                        field_data = {
-                            **field_data,
-                            'enabled': field_data.get('enabled', True)
-                        }
-                        normalized_fields.append(field_data)
-
+                    for field_data in normalized_fields:
                         template_field = TemplateField(
                             template_id=template.id,
                             field_name=field_data['field_name'],
@@ -265,7 +333,7 @@ class TemplateManager:
                             calculated=field_data.get('calculated', False),
                             calculation_rule=field_data.get('calculation_rule'),
                             regex_hint=field_data.get('regex_hint'),
-                            ocr_psm=str(field_data.get('ocr_psm')) if field_data.get('ocr_psm') is not None else None,
+                            ocr_psm=field_data.get('ocr_psm'),
                             ocr_roi=field_data.get('ocr_roi'),
                             enabled=field_data.get('enabled', True)
                         )
