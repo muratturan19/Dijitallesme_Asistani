@@ -63,8 +63,8 @@ class TemplateField(Base):
     calculated = Column(Boolean, default=False)
     calculation_rule = Column(String(500), nullable=True)
     regex_hint = Column(String(500), nullable=True)
-    ocr_psm = Column(String(32), nullable=True)
-    ocr_roi = Column(JSON, nullable=True)
+    ocr_psm = Column(Integer, nullable=True)
+    ocr_roi = Column(Text, nullable=True)
     enabled = Column(Boolean, default=True)
 
     # Relationships
@@ -144,7 +144,7 @@ def init_db():
                 conn,
                 "template_fields",
                 "ocr_psm",
-                "ocr_psm VARCHAR(32) NULL",
+                "ocr_psm INTEGER NULL",
             )
             _ensure_column(
                 conn,
