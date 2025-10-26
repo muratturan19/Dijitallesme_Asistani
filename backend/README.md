@@ -1,14 +1,15 @@
 # Dijitalleşme Asistanı - Backend
 
-FastAPI tabanlı belge dijitalleştirme ve veri çıkarma API'si.
+FastAPI tabanlı belge dijitalleştirme ve veri çıkarma API'si. Türkçe ve İngilizce belgelerdeki özel karakterleri koruyarak iki dilde tutarlı sonuçlar üretmek üzere tasarlanmıştır.
 
 ## Özellikler
 
 - 📄 PDF ve görüntü dosyalarından OCR ile metin çıkarma
-- 🤖 OpenAI GPT-4 ile akıllı alan eşleştirme
+- 🤖 OPENAI_MODEL ortam değişkeniyle seçilebilen OpenAI modelleri (varsayılan `gpt-5`) ile akıllı alan eşleştirme
 - 📊 Excel şablonları ile özelleştirilebilir veri çıkarma
 - 🔄 Toplu belge işleme
 - 📈 Güven skorları ve doğrulama sistemi
+- 🌐 Türkçe ve İngilizce belgeler için tam UTF-8 karakter desteği ile gelişmiş dil işleme
 - 📁 Excel formatında dışa aktarma
 
 ## Gereksinimler
@@ -47,7 +48,7 @@ brew install tesseract-lang
 
 ### 3. Ortam Değişkenleri
 
-`.env.example` dosyasını `.env` olarak kopyalayın ve düzenleyin:
+`.env.example` dosyasını `.env` olarak kopyalayın ve düzenleyin. `OPENAI_MODEL` değişkeniyle erişebildiğiniz sohbet modelini seçebilir, varsayılan `gpt-5` değerini kullanabilirsiniz:
 
 ```bash
 cp ../.env.example .env
@@ -56,6 +57,7 @@ cp ../.env.example .env
 Gerekli ayarlar:
 ```
 OPENAI_API_KEY=your_api_key_here
+OPENAI_MODEL=gpt-5
 TESSERACT_CMD=C:\Program Files\Tesseract-OCR\tesseract.exe  # Windows
 ```
 
