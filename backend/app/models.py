@@ -320,7 +320,7 @@ class TemplateFieldCreate(BaseModel):
     regex_hint: Optional[str] = None
     ocr_psm: Optional[int] = None
     ocr_roi: Optional[str] = None
-    enabled: bool = True
+    enabled: Optional[bool] = True
 
 
 class TemplateFieldResponse(TemplateFieldCreate):
