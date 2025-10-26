@@ -252,14 +252,42 @@ class AIFieldMapper:
             for item in content:
                 if isinstance(item, str):
                     parts.append(item)
-                elif isinstance(item, dict):
-                    text = item.get('text')
-                    if text:
-                        parts.append(str(text))
+                    continue
+
+                item_dict: Optional[Dict[str, Any]] = None
+                if isinstance(item, dict):
+                    item_dict = item
                 else:
-                    text = getattr(item, 'text', None)
+                    item_dict = getattr(item, 'model_dump', None)
+                    if callable(item_dict):
+                        try:
+                            item_dict = item.model_dump()
+                        except Exception:  # pragma: no cover - defensive
+                            item_dict = None
+                    if item_dict is None:
+                        try:
+                            item_dict = dict(item)
+                        except Exception:  # pragma: no cover - defensive
+                            item_dict = None
+
+                if item_dict:
+                    text = item_dict.get('text')
                     if text:
                         parts.append(str(text))
+                        continue
+
+                    json_payload = item_dict.get('json')
+                    if json_payload is not None:
+                        try:
+                            parts.append(json.dumps(json_payload, ensure_ascii=False))
+                        except TypeError:
+                            parts.append(str(json_payload))
+                        continue
+
+                text_attr = getattr(item, 'text', None)
+                if text_attr:
+                    parts.append(str(text_attr))
+
             if parts:
                 return ''.join(parts).strip()
             return None
