@@ -120,7 +120,6 @@ class AIFieldMapper:
                 response = self._client.chat.completions.create(
                     model=self.model,
                     messages=messages,
-                    temperature=0.1,
                     max_completion_tokens=2000
                 )
                 ai_message = response.choices[0].message.content
@@ -128,7 +127,6 @@ class AIFieldMapper:
                 response = openai.ChatCompletion.create(
                     model=self.model,
                     messages=messages,
-                    temperature=0.1,
                     max_tokens=2000
                 )
                 ai_message = response.choices[0].message.content

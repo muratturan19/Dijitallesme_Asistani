@@ -303,20 +303,28 @@ const WelcomeWizard = ({ onComplete }) => {
                 />
               </div>
               <h3 className="font-medium mb-2">Bulunan Alanlar</h3>
+              <div className="flex items-center justify-between mb-2">
+                <label className="inline-flex items-center gap-2 text-sm font-medium text-gray-700">
+                  <input
+                    type="checkbox"
+                    className="rounded"
+                    checked={allFieldsSelected}
+                    onChange={(e) => toggleSelectAllFields(e.target.checked)}
+                  />
+                  <span>Tümünü Seç</span>
+                </label>
+                <span className="text-xs text-gray-500">
+                  {hasEnabledFields
+                    ? 'İşaretli alanlar analizde kullanılacak.'
+                    : 'Analize dahil edilecek alan seçimi yapın.'}
+                </span>
+              </div>
               <div className="overflow-x-auto border border-gray-200 rounded-lg">
                 <table className="min-w-full divide-y divide-gray-200">
                   <thead className="bg-gray-50">
                     <tr>
                       <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="checkbox"
-                            className="rounded"
-                            checked={allFieldsSelected}
-                            onChange={(e) => toggleSelectAllFields(e.target.checked)}
-                          />
-                          <span>Tümünü Seç</span>
-                        </div>
+                        Dahil Et
                       </th>
                       <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Alan Adı
