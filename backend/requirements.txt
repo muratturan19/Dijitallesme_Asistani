@@ -3,7 +3,7 @@ uvicorn
 sqlalchemy
 python-multipart
 pillow
-opencv-python
+opencv-python-headless
 pytesseract
 pymupdf
 openpyxl
