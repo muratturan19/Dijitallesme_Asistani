@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import json
 from pathlib import Path
 import sys
 
@@ -65,11 +66,42 @@ def test_handwriting_prompt_includes_field_level_context() -> None:
 
     ocr_result = {
         'text': 'Lorem ipsum dolor sit amet',
+        'pages': [
+            {
+                'page_number': 1,
+                'text': 'Signed by A.L. appears on the cheque',
+                'lines': [
+                    {
+                        'text': 'Signed by A.L.',
+                        'confidence': 0.45,
+                        'bounding_box': {'x': 10, 'y': 10, 'w': 90, 'h': 40},
+                    },
+                    {
+                        'text': 'Other content',
+                        'confidence': 0.92,
+                    },
+                ],
+            }
+        ],
+        'low_confidence_lines': [
+            {
+                'text': 'Signed by A.L.',
+                'confidence': 0.45,
+                'page_number': 1,
+                'bounding_box': {'x': 10, 'y': 10, 'w': 90, 'h': 40},
+            }
+        ],
         'field_results': {
             'signature': {
                 'text': 'Signed by A.L.',
                 'roi': [10, 10, 100, 50],
-                'bounding_box': {'x': 10, 'y': 10, 'w': 90, 'h': 40},
+                'lines': [
+                    {
+                        'text': 'Signed by A.L.',
+                        'confidence': 0.45,
+                        'bounding_box': {'x': 10, 'y': 10, 'w': 90, 'h': 40},
+                    }
+                ],
             }
         },
         'word_count': 5,
@@ -90,6 +122,25 @@ def test_handwriting_prompt_includes_field_level_context() -> None:
         document_info={'document_id': 1},
     )
 
-    assert 'Signed by A.L.' in prompt
-    assert 'roi' in prompt
-    assert 'field_config' in prompt
+    sections = prompt.split('\n\n')
+
+    general_section = next(
+        section for section in sections if section.startswith('Genel OCR metin önizlemesi:')
+    )
+    _, general_payload = general_section.split('\n', 1)
+    general_data = json.loads(general_payload)
+
+    assert general_data['segments'], 'Genel segment listesi boş olmamalı'
+    assert any(seg.get('field') == 'signature' for seg in general_data['segments'])
+    assert any('bounding_box' in seg for seg in general_data['segments'])
+
+    field_section = next(
+        section for section in sections if section.startswith('Alan: signature')
+    )
+    _, field_payload = field_section.split('\n', 1)
+    field_data = json.loads(field_payload)
+
+    assert field_data['targeted_snippets'], 'Alan kırpıntıları eksik'
+    primary_snippet = field_data['targeted_snippets'][0]
+    assert primary_snippet['text'].startswith('Signed by A.L.')
+    assert primary_snippet['bounding_box']['w'] == 90
