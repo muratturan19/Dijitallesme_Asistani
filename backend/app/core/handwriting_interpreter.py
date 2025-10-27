@@ -157,6 +157,8 @@ class HandwritingInterpreter:
         *,
         temperature: Optional[float] = None,
         context_window: Optional[int] = None,
+        reasoning_extra_kwargs: Optional[Dict[str, Any]] = None,
+        apply_reasoning_temperature: bool = True,
     ) -> None:
         self.api_key = api_key
         self.model = model or settings.AI_HANDWRITING_MODEL
@@ -168,6 +170,13 @@ class HandwritingInterpreter:
             if context_window is None
             else context_window
         )
+        base_extra_kwargs: Dict[str, Any] = dict(reasoning_extra_kwargs or {})
+        top_p_value = self._temperature_to_top_p(
+            self.temperature if apply_reasoning_temperature else None
+        )
+        if top_p_value is not None and "top_p" not in base_extra_kwargs:
+            base_extra_kwargs["top_p"] = top_p_value
+        self.reasoning_extra_kwargs = base_extra_kwargs
 
         self._has_valid_api_key = bool(api_key and api_key.strip())
         self._client = None
@@ -260,7 +269,14 @@ class HandwritingInterpreter:
         """Invoke the specialist model and parse the mapping response."""
 
         if not field_configs:
-            return {"field_mappings": {}, "message": "No specialist fields requested."}
+            return {
+                "field_mappings": {},
+                "message": "No specialist fields requested.",
+                "model_metadata": self._build_model_metadata(
+                    is_reasoning_model=str(self.model or "").startswith("gpt-5"),
+                    reasoning_parameters=None,
+                ),
+            }
 
         prompt = self.build_prompt(
             ocr_result,
@@ -297,20 +313,26 @@ class HandwritingInterpreter:
 
         is_reasoning_model = str(self.model or "").startswith("gpt-5")
         temperature = None if is_reasoning_model else self.temperature
+        applied_extra_kwargs: Optional[Dict[str, Any]] = None
+        transport = "responses" if is_reasoning_model else "chat.completions"
 
         try:
             if self._client is not None:  # pragma: no cover - requires modern SDK
                 if is_reasoning_model:
-                    extra_kwargs = None
+                    extra_kwargs = dict(self.reasoning_extra_kwargs)
                     if self.context_window:
-                        extra_kwargs = {"max_output_tokens": self.context_window}
+                        extra_kwargs.setdefault(
+                            "max_output_tokens", self.context_window
+                        )
+                    applied_extra_kwargs = dict(extra_kwargs)
+                    extra_kwargs_param = extra_kwargs or None
                     response = call_reasoning_model(
                         self._client,
                         model=self.model,
                         messages=messages,
                         response_format={"type": "json_object"},
                         temperature=temperature,
-                        extra_kwargs=extra_kwargs,
+                        extra_kwargs=extra_kwargs_param,
                     )
                 else:
                     request_kwargs = {
@@ -358,7 +380,54 @@ class HandwritingInterpreter:
             logger.exception("Uzman modeli beklenmeyen hata")
             response_payload["error"] = str(exc)
 
+        response_payload["model_metadata"] = self._build_model_metadata(
+            is_reasoning_model=is_reasoning_model,
+            reasoning_parameters=applied_extra_kwargs,
+            transport=transport,
+        )
+
         return response_payload
+
+    @staticmethod
+    def _temperature_to_top_p(value: Optional[float]) -> Optional[float]:
+        """Map temperature-style values to a top_p heuristic for reasoning models."""
+
+        if value is None:
+            return None
+
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return None
+
+        if numeric <= 0:
+            return 0.01
+        if numeric >= 1:
+            return 1.0
+        return round(numeric, 3)
+
+    def _build_model_metadata(
+        self,
+        *,
+        is_reasoning_model: bool,
+        reasoning_parameters: Optional[Dict[str, Any]],
+        transport: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Return metadata to help the UI describe the active specialist model."""
+
+        metadata: Dict[str, Any] = {
+            "model": self.model,
+            "temperature": self.temperature,
+            "context_window": self.context_window,
+            "transport": transport
+            or ("responses" if is_reasoning_model else "chat.completions"),
+            "is_reasoning_model": is_reasoning_model,
+        }
+
+        if reasoning_parameters:
+            metadata["reasoning_parameters"] = dict(reasoning_parameters)
+
+        return metadata
 
     @staticmethod
     def _safe_float(value: Any) -> Optional[float]:
