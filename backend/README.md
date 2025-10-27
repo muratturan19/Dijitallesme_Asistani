@@ -61,9 +61,13 @@ OPENAI_MODEL=gpt-5
 TESSERACT_CMD=C:\Program Files\Tesseract-OCR\tesseract.exe  # Windows
 ```
 
-### 4. Veritabanı Oluşturma
+### 4. Veritabanı Migrasyonları
 
-Uygulama ilk çalıştırıldığında otomatik olarak SQLite veritabanı oluşturulur.
+Veritabanı şemasını hazırlamak için Alembic migrasyonlarını çalıştırın. Bu adım ilk kurulumda **zorunludur** ve kod güncellemelerinden sonra da tekrarlanmalıdır:
+
+```bash
+alembic upgrade head
+```
 
 ## Çalıştırma
 
@@ -80,6 +84,21 @@ python -m app.main
 ```
 
 API şu adreste çalışacaktır: http://localhost:8000
+
+## Sorun Giderme
+
+- **`no such table/column` hatası alıyorum:** Migrasyonların uygulanmadığı anlamına gelir. Proje kök dizininde aşağıdaki komutları çalıştırarak veritabanı şemasını güncelleyin:
+
+  ```bash
+  alembic upgrade head
+  ```
+
+  Eğer daha önce hatalı bir migrasyon uygulandıysa önce son migrasyonu geri alıp yeniden uygulayabilirsiniz:
+
+  ```bash
+  alembic downgrade -1
+  alembic upgrade head
+  ```
 
 ### API Dokümantasyonu
 
