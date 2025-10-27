@@ -109,7 +109,14 @@ const FieldMapper = ({ data, onNext, onBack }) => {
         templateFields: fieldConfigs,
       });
     } catch (error) {
-      toast.error('Kaydetme hatası: ' + (error.response?.data?.detail || error.message));
+      const status = error.response?.status;
+      const detail = error.response?.data?.detail || error.message;
+
+      if (status === 409) {
+        toast.error(detail || 'Şablon adı zaten kullanımda. Lütfen farklı bir isim seçin.');
+      } else {
+        toast.error('Kaydetme hatası: ' + detail);
+      }
     } finally {
       setLoading(false);
     }

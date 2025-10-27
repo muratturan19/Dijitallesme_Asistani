@@ -4,11 +4,22 @@ import openpyxl
 import logging
 from typing import List, Dict, Any, Optional, Union
 from pathlib import Path
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from ..database import Template, TemplateField
 from ..models import TemplateExtractionRules
 
 logger = logging.getLogger(__name__)
+
+
+class TemplateNameConflictError(Exception):
+    def __init__(self, existing_name: str):
+        self.existing_name = existing_name
+        message = (
+            f'"{existing_name}" adlı şablon zaten mevcut. '
+            "Lütfen farklı bir isim seçin."
+        )
+        super().__init__(message)
 
 
 class TemplateManager:
@@ -22,6 +33,41 @@ class TemplateManager:
             db: Database session
         """
         self.db = db
+
+    @staticmethod
+    def _normalize_template_name(name: str) -> str:
+        if name is None:
+            return ""
+        return str(name).strip()
+
+    @classmethod
+    def _normalize_template_lookup_key(cls, name: str) -> str:
+        return cls._normalize_template_name(name).lower()
+
+    def _get_template_by_name(self, name: str) -> Optional[Template]:
+        lookup_key = self._normalize_template_lookup_key(name)
+
+        if not lookup_key:
+            return None
+
+        return (
+            self.db.query(Template)
+            .filter(func.lower(Template.name) == lookup_key)
+            .first()
+        )
+
+    def _ensure_unique_name(self, name: str, current_id: Optional[int] = None) -> str:
+        normalized_name = self._normalize_template_name(name)
+
+        if not normalized_name:
+            return normalized_name
+
+        existing = self._get_template_by_name(normalized_name)
+
+        if existing and existing.id != current_id:
+            raise TemplateNameConflictError(existing.name)
+
+        return normalized_name
 
     def parse_excel_template(self, file_path: str) -> List[Dict[str, Any]]:
         """
@@ -215,11 +261,12 @@ class TemplateManager:
             Created Template object
         """
         try:
+            normalized_name = self._ensure_unique_name(name)
             normalized_fields = self._normalize_fields(fields)
 
             # Create template
             template = Template(
-                name=name,
+                name=normalized_name,
                 target_fields=normalized_fields,
                 extraction_rules=self._normalize_rules(extraction_rules),
                 sample_document_path=sample_doc_path
@@ -346,6 +393,10 @@ class TemplateManager:
                     setattr(template, key, self._normalize_rules(value))
                     continue
 
+                if key == 'name':
+                    template.name = self._ensure_unique_name(value, current_id=template.id)
+                    continue
+
                 if hasattr(template, key):
                     setattr(template, key, value)
 
@@ -354,6 +405,10 @@ class TemplateManager:
 
             logger.info(f"Şablon güncellendi: {template_id}")
             return template
+
+        except TemplateNameConflictError:
+            self.db.rollback()
+            raise
 
         except Exception as e:
             self.db.rollback()

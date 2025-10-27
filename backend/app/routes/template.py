@@ -10,7 +10,7 @@ from ..models import (
     TemplateCreate, TemplateResponse, AnalyzeRequest,
     SaveTemplateRequest, TestTemplateRequest, TemplateFieldsUpdate
 )
-from ..core.template_manager import TemplateManager
+from ..core.template_manager import TemplateManager, TemplateNameConflictError
 from ..core.image_processor import ImageProcessor
 from ..core.ocr_engine import OCREngine
 from .ocr_utils import (
@@ -271,6 +271,9 @@ async def save_template(
             'message': 'Şablon başarıyla kaydedildi'
         }
 
+    except TemplateNameConflictError as conflict:
+        raise HTTPException(status_code=409, detail=str(conflict)) from conflict
+
     except HTTPException:
         raise
     except Exception as e:
@@ -307,6 +310,9 @@ async def update_template_fields(
             'field_count': len(payload.target_fields),
             'message': 'Alan ayarları güncellendi'
         }
+
+    except TemplateNameConflictError as conflict:
+        raise HTTPException(status_code=409, detail=str(conflict)) from conflict
 
     except HTTPException:
         raise
@@ -363,6 +369,9 @@ async def create_template(
         logger.info(f"Yeni şablon oluşturuldu: {new_template.id}")
 
         return new_template
+
+    except TemplateNameConflictError as conflict:
+        raise HTTPException(status_code=409, detail=str(conflict)) from conflict
 
     except Exception as e:
         logger.error(f"Şablon oluşturma hatası: {str(e)}")
