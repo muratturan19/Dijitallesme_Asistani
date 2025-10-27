@@ -17,14 +17,30 @@ const initialFormState = {
   userId: '',
 };
 
-const TemplateLearningView = ({ onBack }) => {
+const TemplateLearningView = ({ onBack, initialDocumentId, initialFieldId, initialTemplateId }) => {
   const [templates, setTemplates] = useState([]);
-  const [selectedTemplateId, setSelectedTemplateId] = useState('');
+  const [selectedTemplateId, setSelectedTemplateId] = useState(
+    initialTemplateId !== undefined && initialTemplateId !== null ? String(initialTemplateId) : ''
+  );
   const [templateFields, setTemplateFields] = useState([]);
-  const [selectedFieldId, setSelectedFieldId] = useState('');
+  const [selectedFieldId, setSelectedFieldId] = useState(
+    initialFieldId !== undefined && initialFieldId !== null && initialFieldId !== ''
+      ? String(initialFieldId)
+      : ''
+  );
   const [hints, setHints] = useState({});
   const [history, setHistory] = useState([]);
-  const [formState, setFormState] = useState(initialFormState);
+  const [formState, setFormState] = useState(() => ({
+    ...initialFormState,
+    documentId:
+      initialDocumentId !== undefined && initialDocumentId !== null && initialDocumentId !== ''
+        ? String(initialDocumentId)
+        : '',
+    templateFieldId:
+      initialFieldId !== undefined && initialFieldId !== null && initialFieldId !== ''
+        ? String(initialFieldId)
+        : '',
+  }));
   const [sampleLimit, setSampleLimit] = useState(50);
   const [loadingTemplate, setLoadingTemplate] = useState(false);
   const [loadingHints, setLoadingHints] = useState(false);
@@ -43,6 +59,43 @@ const TemplateLearningView = ({ onBack }) => {
 
     loadTemplates();
   }, []);
+
+  useEffect(() => {
+    if (initialTemplateId === undefined || initialTemplateId === null) {
+      return;
+    }
+    setSelectedTemplateId(String(initialTemplateId));
+  }, [initialTemplateId]);
+
+  useEffect(() => {
+    if (initialDocumentId === undefined || initialDocumentId === null) {
+      return;
+    }
+
+    setFormState((prev) => ({
+      ...prev,
+      documentId:
+        initialDocumentId === '' ? '' : String(initialDocumentId),
+    }));
+  }, [initialDocumentId]);
+
+  const updateFieldSelection = (value) => {
+    setSelectedFieldId(value);
+    setFormState((prev) => ({ ...prev, templateFieldId: value }));
+  };
+
+  useEffect(() => {
+    if (initialFieldId === undefined) {
+      return;
+    }
+
+    if (initialFieldId === null || initialFieldId === '') {
+      updateFieldSelection('');
+      return;
+    }
+
+    updateFieldSelection(String(initialFieldId));
+  }, [initialFieldId]);
 
   useEffect(() => {
     if (!selectedTemplateId) {
@@ -127,14 +180,12 @@ const TemplateLearningView = ({ onBack }) => {
   const handleTemplateChange = (event) => {
     const value = event.target.value;
     setSelectedTemplateId(value);
-    setSelectedFieldId('');
-    setFormState((prev) => ({ ...prev, templateFieldId: '' }));
+    updateFieldSelection('');
   };
 
   const handleFieldChange = (event) => {
     const value = event.target.value;
-    setSelectedFieldId(value);
-    setFormState((prev) => ({ ...prev, templateFieldId: value }));
+    updateFieldSelection(value);
   };
 
   const handleFormChange = (event) => {

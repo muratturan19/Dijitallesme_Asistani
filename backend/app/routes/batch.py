@@ -449,10 +449,12 @@ async def get_batch_status(batch_job_id: int, db: Session = Depends(get_db)):
             Document.status == "completed"
         ).count()
 
-        failed_docs = db.query(Document).filter(
+        failed_documents_query = db.query(Document).filter(
             Document.batch_job_id == batch_job_id,
             Document.status == "failed"
-        ).count()
+        )
+        failed_documents_records = failed_documents_query.all()
+        failed_docs = len(failed_documents_records)
 
         # Update batch job
         batch_job.processed_files = completed_docs
@@ -468,7 +470,17 @@ async def get_batch_status(batch_job_id: int, db: Session = Depends(get_db)):
         progress = (completed_docs + failed_docs) / total_docs * 100 if total_docs > 0 else 0
 
         # Get low confidence items
-        low_confidence_items = []
+        template_field_lookup: Dict[str, Dict[str, Any]] = {}
+        if batch_job.template and isinstance(batch_job.template.target_fields, list):
+            for field in batch_job.template.target_fields:
+                if not isinstance(field, dict):
+                    continue
+                field_name = field.get('field_name')
+                if not field_name:
+                    continue
+                template_field_lookup[field_name] = field
+
+        low_confidence_items: List[Dict[str, Any]] = []
 
         extracted_data_list = db.query(ExtractedData).join(Document).filter(
             Document.batch_job_id == batch_job_id,
@@ -476,18 +488,36 @@ async def get_batch_status(batch_job_id: int, db: Session = Depends(get_db)):
         ).all()
 
         for extracted_data in extracted_data_list:
-            # Check if any field has low confidence
-            has_low_confidence = False
-            for field, confidence in extracted_data.confidence_scores.items():
-                if confidence < 0.5:
-                    has_low_confidence = True
-                    break
+            field_values = extracted_data.field_values or {}
+            confidence_scores = extracted_data.confidence_scores or {}
 
-            if has_low_confidence:
+            low_fields: List[Dict[str, Any]] = []
+
+            for field_name, raw_confidence in confidence_scores.items():
+                try:
+                    confidence = float(raw_confidence)
+                except (TypeError, ValueError):
+                    continue
+
+                if confidence >= settings.AI_HANDWRITING_LOW_CONFIDENCE_THRESHOLD:
+                    continue
+
+                field_info = template_field_lookup.get(field_name, {})
+                low_fields.append({
+                    'field_name': field_name,
+                    'display_name': field_info.get('display_name') or field_info.get('field_name') or field_name,
+                    'confidence': confidence,
+                    'value': field_values.get(field_name),
+                    'template_field_id': field_info.get('id'),
+                })
+
+            if low_fields:
                 low_confidence_items.append({
                     'document_id': extracted_data.document_id,
                     'extracted_data_id': extracted_data.id,
-                    'confidence_scores': extracted_data.confidence_scores
+                    'confidence_scores': confidence_scores,
+                    'field_values': field_values,
+                    'low_fields': low_fields,
                 })
 
         return BatchStatusResponse(
@@ -498,6 +528,13 @@ async def get_batch_status(batch_job_id: int, db: Session = Depends(get_db)):
             processed_files=completed_docs,
             failed_files=failed_docs,
             low_confidence_items=low_confidence_items,
+            failed_documents=[
+                {
+                    'document_id': doc.id,
+                    'filename': doc.filename,
+                }
+                for doc in failed_documents_records
+            ],
             applied_rules=applied_rules
         )
 

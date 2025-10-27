@@ -470,7 +470,8 @@ class BatchStatusResponse(BaseModel):
     total_files: int
     processed_files: int
     failed_files: int
-    low_confidence_items: List[Dict[str, Any]]
+    low_confidence_items: List[Dict[str, Any]] = Field(default_factory=list)
+    failed_documents: List[Dict[str, Any]] = Field(default_factory=list)
     applied_rules: Optional[Dict[str, Any]] = None
 
 
