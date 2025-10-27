@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { toast } from 'react-toastify';
 import {
@@ -7,6 +7,7 @@ import {
   analyzeDocument,
   createTemplate,
   updateTemplateFields,
+  getTemplates,
 } from '../api';
 
 const WelcomeWizard = ({ onComplete }) => {
@@ -18,10 +19,61 @@ const WelcomeWizard = ({ onComplete }) => {
   const [templateFields, setTemplateFields] = useState([]);
   const [templateName, setTemplateName] = useState('Yeni Şablon');
   const [templateError, setTemplateError] = useState(null);
+  const [templateMode, setTemplateMode] = useState('new');
+  const [templates, setTemplates] = useState([]);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
+  const [selectedExistingTemplateId, setSelectedExistingTemplateId] = useState('');
   const [loading, setLoading] = useState(false);
 
   const hasEnabledFields = templateFields.some(field => field.enabled !== false);
   const allFieldsSelected = templateFields.length > 0 && templateFields.every(field => field.enabled !== false);
+  const canProceedWithTemplate = useMemo(() => {
+    if (!hasEnabledFields) {
+      return false;
+    }
+
+    if (templateMode === 'existing') {
+      return Boolean(templateId);
+    }
+
+    return true;
+  }, [hasEnabledFields, templateMode, templateId]);
+
+  useEffect(() => {
+    const loadTemplates = async () => {
+      setTemplatesLoading(true);
+      try {
+        const response = await getTemplates();
+        setTemplates(Array.isArray(response) ? response : []);
+      } catch (error) {
+        toast.error('Şablon listesi yüklenemedi: ' + (error.response?.data?.detail || error.message));
+      } finally {
+        setTemplatesLoading(false);
+      }
+    };
+
+    loadTemplates();
+  }, []);
+
+  useEffect(() => {
+    if (templateMode === 'new') {
+      setTemplateId(null);
+      setSelectedExistingTemplateId('');
+      return;
+    }
+
+    if (!selectedExistingTemplateId) {
+      setTemplateId(null);
+      return;
+    }
+
+    const selected = templates.find(template => String(template.id) === String(selectedExistingTemplateId));
+
+    if (selected) {
+      setTemplateId(selected.id);
+      setTemplateName(selected.name || '');
+    }
+  }, [templateMode, selectedExistingTemplateId, templates]);
 
   const normalizeFieldDefaults = (field) => ({
     ...field,
@@ -127,7 +179,6 @@ const WelcomeWizard = ({ onComplete }) => {
     }
 
     setTemplateFile(file);
-    setTemplateId(null);
     setTemplateError(null);
     setLoading(true);
 
@@ -141,7 +192,16 @@ const WelcomeWizard = ({ onComplete }) => {
         ? file.name.replace(/\.[^/.]+$/, '').trim() || 'Yeni Şablon'
         : 'Yeni Şablon';
 
-      setTemplateName(derivedName);
+      if (templateMode === 'existing') {
+        const selected = templates.find(template => String(template.id) === String(selectedExistingTemplateId));
+        if (selected?.name) {
+          setTemplateName(selected.name);
+        } else {
+          setTemplateName(derivedName);
+        }
+      } else {
+        setTemplateName(derivedName);
+      }
 
       toast.success(`Excel şablonu yüklendi! ${result.field_count} alan bulundu.`);
     } catch (error) {
@@ -190,6 +250,11 @@ const WelcomeWizard = ({ onComplete }) => {
     setTemplateError(null);
 
     try {
+      if (templateMode === 'existing' && !templateId) {
+        toast.error('Lütfen mevcut bir şablon seçin.');
+        return;
+      }
+
       if (templateFields.length > 0) {
         const trimmedName = templateName.trim();
         const effectiveName = trimmedName || 'Yeni Şablon';
@@ -355,6 +420,61 @@ const WelcomeWizard = ({ onComplete }) => {
 
           {templateFields.length > 0 && (
             <div className="mt-4">
+              {templates.length > 0 && (
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Şablon Seçimi</label>
+                  <div className="flex flex-wrap gap-4 mb-2">
+                    <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+                      <input
+                        type="radio"
+                        name="template-mode"
+                        value="new"
+                        checked={templateMode === 'new'}
+                        onChange={() => setTemplateMode('new')}
+                      />
+                      Yeni şablon oluştur
+                    </label>
+                    <label className="inline-flex items-center gap-2 text-sm text-gray-700">
+                      <input
+                        type="radio"
+                        name="template-mode"
+                        value="existing"
+                        checked={templateMode === 'existing'}
+                        onChange={() => setTemplateMode('existing')}
+                      />
+                      Mevcut şablonu güncelle
+                    </label>
+                  </div>
+                  {templateMode === 'existing' && (
+                    <div className="mt-2">
+                      <label className="block text-xs font-medium text-gray-600 mb-1" htmlFor="existing-template-select">
+                        Mevcut şablon
+                      </label>
+                      <select
+                        id="existing-template-select"
+                        className="border rounded px-3 py-2 w-full border-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                        value={selectedExistingTemplateId}
+                        onChange={(e) => {
+                          setSelectedExistingTemplateId(e.target.value);
+                          if (templateError) {
+                            setTemplateError(null);
+                          }
+                        }}
+                      >
+                        <option value="">Bir şablon seçin</option>
+                        {templates.map((template) => (
+                          <option key={template.id} value={template.id}>
+                            {template.name}
+                          </option>
+                        ))}
+                      </select>
+                      {templatesLoading && (
+                        <p className="text-xs text-gray-500 mt-1">Şablonlar yükleniyor...</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="mb-4">
                 <label className="block text-sm font-medium text-gray-700 mb-1">Şablon Adı</label>
                 <input
@@ -372,6 +492,7 @@ const WelcomeWizard = ({ onComplete }) => {
                     }
                   }}
                   placeholder="Örn: Fatura Şablonu"
+                  disabled={templateMode === 'existing' && selectedExistingTemplateId === ''}
                 />
                 {templateError && (
                   <p className="text-sm text-red-600 mt-1">{templateError}</p>
@@ -479,7 +600,7 @@ const WelcomeWizard = ({ onComplete }) => {
               <button
                 onClick={handlePrepareAnalysis}
                 className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:bg-gray-400"
-                disabled={loading || !hasEnabledFields}
+                disabled={loading || !canProceedWithTemplate}
               >
                 {loading ? 'Kaydediliyor...' : 'Devam Et'}
               </button>
