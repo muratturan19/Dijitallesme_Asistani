@@ -123,16 +123,16 @@ class AIFieldMapper:
 
             source = (ocr_data or {}).get('source', 'unknown') if ocr_data else 'unknown'
             is_reasoning_model = str(self.model).startswith("gpt-5")
-            max_completion_tokens = None if is_reasoning_model else 2000
-            max_output_tokens = 20000 if is_reasoning_model else None
+            max_completion_tokens = 2000
             temperature = 1.0
             response_format = {"type": "json_object"}
+            token_limit_for_logging = None if is_reasoning_model else max_completion_tokens
 
             logger.info(
                 "AI eşleme çağrısı: model=%s, response_format=%s, token_limit=%s, temperature=%s",
                 self.model,
                 response_format.get('type'),
-                max_output_tokens if is_reasoning_model else max_completion_tokens,
+                token_limit_for_logging,
                 temperature,
             )
             logger.info("OCR kaynağı: %s", source)
@@ -159,37 +159,17 @@ class AIFieldMapper:
                 }
             ]
 
-            response_input = [
-                {
-                    "role": msg.get("role", "user"),
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": str(msg.get("content", ""))
-                        }
-                    ],
-                }
-                for msg in messages
-            ]
-
             logger.info("OpenAI API çağrısı hazırlanıyor...")
             if self._client is not None:
                 self._refresh_response_format_support()
                 if is_reasoning_model:
                     request_kwargs = {
                         "model": self.model,
-                        "input": response_input,
+                        "input": messages,
                         "temperature": temperature,
+                        "text": {"format": {"type": "json_object"}},
+                        "reasoning": {"effort": "medium"},
                     }
-                    if response_format and self._responses_accepts_response_format:
-                        request_kwargs["response_format"] = response_format
-                    else:
-                        logger.debug(
-                            "response_format desteği olmayan Responses.create kullanımı tespit edildi"
-                        )
-                    if max_output_tokens is not None:
-                        request_kwargs["max_output_tokens"] = max_output_tokens
-
                     response = self._client.responses.create(**request_kwargs)
                 else:
                     request_kwargs = {
@@ -213,9 +193,8 @@ class AIFieldMapper:
                     "messages": messages,
                     "temperature": temperature,
                 }
-                token_limit = max_output_tokens if is_reasoning_model else max_completion_tokens
-                if token_limit is not None:
-                    request_kwargs["max_tokens"] = token_limit
+                if (not is_reasoning_model) and max_completion_tokens is not None:
+                    request_kwargs["max_tokens"] = max_completion_tokens
 
                 response = openai.ChatCompletion.create(**request_kwargs)
 
