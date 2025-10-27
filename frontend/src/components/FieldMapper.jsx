@@ -26,6 +26,10 @@ const FieldMapper = ({ data, onNext, onBack }) => {
       return Number.isFinite(numeric) ? Math.min(1, Math.max(0, numeric)) : null;
     })(),
     auto_detected_handwriting: field?.auto_detected_handwriting === undefined ? false : Boolean(field.auto_detected_handwriting),
+    regex_hint:
+      field?.regex_hint === undefined || field?.regex_hint === null
+        ? ''
+        : field.regex_hint,
   });
 
   const [fieldConfigs, setFieldConfigs] = useState(() => {
@@ -123,15 +127,17 @@ const FieldMapper = ({ data, onNext, onBack }) => {
     setLoading(true);
     const trimmedName = templateName.trim() || 'Yeni Şablon';
     setTemplateName(trimmedName);
+    const normalizedConfigs = fieldConfigs.map(field => normalizeFieldConfig(field));
+    setFieldConfigs(normalizedConfigs);
 
     try {
-      await saveTemplate(data.templateId, trimmedName, mappings, fieldConfigs);
+      await saveTemplate(data.templateId, trimmedName, mappings, normalizedConfigs);
       toast.success('Şablon kaydedildi!');
       onNext({
         ...data,
         templateName: trimmedName,
         confirmedMapping: mappings,
-        templateFields: fieldConfigs,
+        templateFields: normalizedConfigs,
       });
     } catch (error) {
       const status = error.response?.status;
@@ -152,28 +158,17 @@ const FieldMapper = ({ data, onNext, onBack }) => {
   );
 
   const handleFieldConfigChange = (fieldName, key, value) => {
+    if (!['enabled', 'data_type', 'required'].includes(key)) {
+      return;
+    }
+
     let normalizedValue = value;
 
-    if (key === 'processing_mode') {
-      normalizedValue = value ? String(value).trim().toLowerCase() : 'auto';
+    if (key === 'data_type') {
+      normalizedValue = value ? String(value).trim() : 'text';
     }
 
-    if (key === 'llm_tier') {
-      normalizedValue = value ? String(value).trim().toLowerCase() : 'standard';
-    }
-
-    if (key === 'handwriting_threshold') {
-      if (value === '' || value === null || value === undefined) {
-        normalizedValue = null;
-      } else {
-        const numeric = Number(value);
-        normalizedValue = Number.isFinite(numeric)
-          ? Math.min(1, Math.max(0, numeric))
-          : null;
-      }
-    }
-
-    if (key === 'auto_detected_handwriting') {
+    if (key === 'enabled' || key === 'required') {
       normalizedValue = Boolean(value);
     }
 
@@ -183,26 +178,22 @@ const FieldMapper = ({ data, onNext, onBack }) => {
       if (!exists) {
         return [
           ...prev,
-          {
+          normalizeFieldConfig({
             field_name: fieldName,
-            data_type: key === 'data_type' ? value : 'text',
-            required: key === 'required' ? value : false,
-            regex_hint: key === 'regex_hint' ? value : '',
-            enabled: key === 'enabled' ? value : true,
-            processing_mode: key === 'processing_mode' ? normalizedValue : 'auto',
-            llm_tier: key === 'llm_tier' ? normalizedValue : 'standard',
-            handwriting_threshold: key === 'handwriting_threshold' ? normalizedValue : null,
-            auto_detected_handwriting: key === 'auto_detected_handwriting' ? normalizedValue : false,
-          },
+            data_type: key === 'data_type' ? normalizedValue : 'text',
+            required: key === 'required' ? normalizedValue : false,
+            regex_hint: '',
+            enabled: key === 'enabled' ? normalizedValue : true,
+          }),
         ];
       }
 
       return prev.map(field =>
         field.field_name === fieldName
-          ? {
+          ? normalizeFieldConfig({
               ...field,
               [key]: normalizedValue,
-            }
+            })
           : field
       );
     });
@@ -219,17 +210,15 @@ const FieldMapper = ({ data, onNext, onBack }) => {
         return prev;
       }
 
-      const newEntries = additions.map(fieldName => ({
-        field_name: fieldName,
-        data_type: 'text',
-        required: false,
-        regex_hint: '',
-        enabled: true,
-        processing_mode: 'auto',
-        llm_tier: 'standard',
-        handwriting_threshold: null,
-        auto_detected_handwriting: false,
-      }));
+      const newEntries = additions.map(fieldName =>
+        normalizeFieldConfig({
+          field_name: fieldName,
+          data_type: 'text',
+          required: false,
+          regex_hint: '',
+          enabled: true,
+        })
+      );
 
       return [...prev, ...newEntries];
     });
@@ -316,115 +305,43 @@ const FieldMapper = ({ data, onNext, onBack }) => {
                       const isEnabled = fieldConfig.enabled !== false;
 
                       return (
-                        <div className="flex flex-col gap-3">
-                          <div className="flex flex-wrap items-center gap-4">
-                            <label className="flex items-center gap-2 text-sm">
-                              <input
-                                type="checkbox"
-                                className="rounded"
-                                checked={isEnabled}
-                                onChange={(e) =>
-                                  handleFieldConfigChange(fieldName, 'enabled', e.target.checked)
-                                }
-                              />
-                              <span>Dahil Et</span>
-                            </label>
-                            <div>
-                              <label className="block text-xs text-gray-500 mb-1">Veri Tipi</label>
-                              <select
-                                className="border rounded px-2 py-1 text-sm"
-                                value={fieldConfig.data_type || 'text'}
-                                onChange={(e) =>
-                                  handleFieldConfigChange(fieldName, 'data_type', e.target.value)
-                                }
-                              >
-                                <option value="text">Metin</option>
-                                <option value="number">Sayı</option>
-                                <option value="date">Tarih</option>
-                              </select>
-                            </div>
-                            <label className="flex items-center gap-2 text-sm">
-                              <input
-                                type="checkbox"
-                                className="rounded"
-                                checked={fieldConfig.required || false}
-                                onChange={(e) =>
-                                  handleFieldConfigChange(fieldName, 'required', e.target.checked)
-                                }
-                              />
-                              <span>Gerekli</span>
-                            </label>
-                          </div>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div>
-                              <label className="block text-xs text-gray-500 mb-1">İşleme Modu</label>
-                              <input
-                                type="text"
-                                className="border rounded px-2 py-1 text-sm w-full"
-                                value={fieldConfig.processing_mode || 'auto'}
-                                onChange={(e) =>
-                                  handleFieldConfigChange(fieldName, 'processing_mode', e.target.value)
-                                }
-                                placeholder="örn: auto, ocr, llm"
-                              />
-                            </div>
-                            <div>
-                              <label className="block text-xs text-gray-500 mb-1">LLM Katmanı</label>
-                              <input
-                                type="text"
-                                className="border rounded px-2 py-1 text-sm w-full"
-                                value={fieldConfig.llm_tier || 'standard'}
-                                onChange={(e) =>
-                                  handleFieldConfigChange(fieldName, 'llm_tier', e.target.value)
-                                }
-                                placeholder="örn: standard, premium"
-                              />
-                            </div>
-                          </div>
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div>
-                              <label className="block text-xs text-gray-500 mb-1">El Yazısı Eşiği (0-1)</label>
-                              <input
-                                type="number"
-                                min="0"
-                                max="1"
-                                step="0.01"
-                                className="border rounded px-2 py-1 text-sm w-full"
-                                value={fieldConfig.handwriting_threshold ?? ''}
-                                onChange={(e) =>
-                                  handleFieldConfigChange(fieldName, 'handwriting_threshold', e.target.value)
-                                }
-                                placeholder="örn: 0.65"
-                              />
-                            </div>
-                            <label className="flex items-center gap-2 text-sm">
-                              <input
-                                type="checkbox"
-                                className="rounded"
-                                checked={fieldConfig.auto_detected_handwriting || false}
-                                onChange={(e) =>
-                                  handleFieldConfigChange(
-                                    fieldName,
-                                    'auto_detected_handwriting',
-                                    e.target.checked
-                                  )
-                                }
-                              />
-                              <span>Otomatik El Yazısı Algılandı</span>
-                            </label>
-                          </div>
-                          <div>
-                            <label className="block text-xs text-gray-500 mb-1">Regex İpucu</label>
+                        <div className="flex flex-wrap items-center gap-4">
+                          <label className="flex items-center gap-2 text-sm">
                             <input
-                              type="text"
-                              className="input text-sm"
-                              value={fieldConfig.regex_hint || ''}
+                              type="checkbox"
+                              className="rounded"
+                              checked={isEnabled}
                               onChange={(e) =>
-                                handleFieldConfigChange(fieldName, 'regex_hint', e.target.value)
+                                handleFieldConfigChange(fieldName, 'enabled', e.target.checked)
                               }
-                              placeholder="Örn: ^[0-9]{11}$"
                             />
+                            <span>Dahil Et</span>
+                          </label>
+                          <div>
+                            <label className="block text-xs text-gray-500 mb-1">Veri Tipi</label>
+                            <select
+                              className="border rounded px-2 py-1 text-sm"
+                              value={fieldConfig.data_type || 'text'}
+                              onChange={(e) =>
+                                handleFieldConfigChange(fieldName, 'data_type', e.target.value)
+                              }
+                            >
+                              <option value="text">Metin</option>
+                              <option value="number">Sayı</option>
+                              <option value="date">Tarih</option>
+                            </select>
                           </div>
+                          <label className="flex items-center gap-2 text-sm">
+                            <input
+                              type="checkbox"
+                              className="rounded"
+                              checked={fieldConfig.required || false}
+                              onChange={(e) =>
+                                handleFieldConfigChange(fieldName, 'required', e.target.checked)
+                              }
+                            />
+                            <span>Gerekli</span>
+                          </label>
                         </div>
                       );
                     })()}
