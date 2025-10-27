@@ -18,6 +18,11 @@ from .ocr_utils import (
     run_field_level_ocr
 )
 from ..core.ai_field_mapper import AIFieldMapper
+from ..core.handwriting_interpreter import (
+    HandwritingInterpreter,
+    determine_specialist_candidates,
+    merge_field_mappings,
+)
 from ..core.template_learning_service import TemplateLearningService
 
 logger = logging.getLogger(__name__)
@@ -151,7 +156,9 @@ async def analyze_document(
 
         ai_mapper = AIFieldMapper(
             settings.OPENAI_API_KEY,
-            settings.OPENAI_MODEL
+            settings.AI_PRIMARY_MODEL,
+            temperature=settings.AI_PRIMARY_TEMPERATURE,
+            context_window=settings.AI_PRIMARY_CONTEXT_WINDOW,
         )
 
         if (
@@ -188,18 +195,73 @@ async def analyze_document(
                 'overall_confidence': 0.0
             }
 
+        primary_field_mappings = mapping_result.get('field_mappings') or {}
+        candidate_configs = determine_specialist_candidates(
+            template_fields,
+            primary_field_mappings,
+            low_confidence_floor=settings.AI_HANDWRITING_LOW_CONFIDENCE_THRESHOLD,
+            allowed_tiers=settings.AI_HANDWRITING_TIERS,
+        )
+
+        specialist_mapping: Dict[str, Any] = {}
+        specialist_usage: Optional[Dict[str, Any]] = None
+        specialist_error: Optional[str] = None
+
+        if candidate_configs:
+            logger.info(
+                "Uzman modeli tetiklendi: belge=%s, alanlar=%s",
+                document.id,
+                sorted(candidate_configs.keys()),
+            )
+            interpreter = HandwritingInterpreter(settings.OPENAI_API_KEY)
+            specialist_response = interpreter.interpret_fields(
+                ocr_result,
+                candidate_configs,
+                primary_field_mappings,
+                field_hints=field_hints,
+                document_info={
+                    'document_id': document.id,
+                    'template_id': request.template_id,
+                },
+            )
+            specialist_mapping = specialist_response.get('field_mappings') or {}
+            specialist_usage = specialist_response.get('usage')
+            specialist_error = specialist_response.get('error')
+
+            if specialist_error:
+                logger.warning(
+                    "Uzman modeli hatası: belge=%s, hata=%s",
+                    document.id,
+                    specialist_error,
+                )
+            else:
+                logger.info(
+                    "Uzman modeli tamamlandı: belge=%s, eşleşen_alanlar=%d",
+                    document.id,
+                    len(specialist_mapping),
+                )
+
+        merged_mappings = merge_field_mappings(
+            primary_field_mappings,
+            specialist_mapping,
+        )
+
         # Format response
-        suggested_mapping = {}
-        for field_name, field_data in mapping_result['field_mappings'].items():
-            confidence = field_data['confidence']
+        suggested_mapping: Dict[str, Any] = {}
+        for field_name, field_data in merged_mappings.items():
+            confidence = field_data.get('confidence', 0.0)
             status = ai_mapper.calculate_field_status(confidence)
 
-            suggested_mapping[field_name] = {
-                'value': field_data['value'],
+            entry = {
+                'value': field_data.get('value'),
                 'confidence': confidence,
                 'status': status,
-                'source': field_data.get('source', '')
+                'source': field_data.get('source', ''),
             }
+            if field_data.get('alternates'):
+                entry['alternates'] = field_data['alternates']
+
+            suggested_mapping[field_name] = entry
 
         for field in all_template_fields:
             field_name = field.get('field_name')
@@ -221,15 +283,36 @@ async def analyze_document(
 
         error_message = mapping_result.get('error')
 
+        combined_confidence = mapping_result.get('overall_confidence', 0.0)
+        if specialist_mapping:
+            confidences = [
+                float(item.get('confidence', 0.0) or 0.0)
+                for item in specialist_mapping.values()
+                if isinstance(item, dict)
+            ]
+            if confidences:
+                combined_confidence = max(
+                    combined_confidence,
+                    sum(confidences) / len(confidences),
+                )
+
         response_payload = {
             'suggested_mapping': suggested_mapping,
             'ocr_text': ocr_result['text'],
-            'overall_confidence': mapping_result['overall_confidence'],
+            'overall_confidence': combined_confidence,
             'word_count': ocr_result.get('word_count', 0),
             'extraction_source': ocr_result.get('source', 'ocr'),
             'applied_rules': applied_rules,
             'error': error_message
         }
+
+        if candidate_configs:
+            response_payload['specialist'] = {
+                'requested_fields': sorted(candidate_configs.keys()),
+                'resolved_fields': sorted(specialist_mapping.keys()),
+                'usage': specialist_usage,
+                'error': specialist_error,
+            }
 
         if error_message:
             response_payload['message'] = (
