@@ -95,7 +95,7 @@ class TemplateManager:
         # Number patterns
         number_keywords = [
             'tutar', 'fiyat', 'miktar', 'adet', 'toplam', 'kdv',
-            'amount', 'price', 'quantity', 'total', 'sayı', 'no'
+            'amount', 'price', 'quantity', 'total', 'sayı'
         ]
         if any(keyword in field_lower for keyword in number_keywords):
             return 'number'
