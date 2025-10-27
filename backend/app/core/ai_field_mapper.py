@@ -47,17 +47,7 @@ class AIFieldMapper:
             if OpenAI is not None:
                 # Modern OpenAI client (>=1.0)
                 self._client = OpenAI(api_key=api_key)
-                self._responses_accepts_response_format = self._supports_kwarg(
-                    getattr(getattr(self._client, "responses", None), "create", None),
-                    "response_format",
-                )
-                chat_completions = getattr(
-                    getattr(self._client, "chat", None), "completions", None
-                )
-                self._chat_accepts_response_format = self._supports_kwarg(
-                    getattr(chat_completions, "create", None),
-                    "response_format",
-                )
+                self._refresh_response_format_support()
             else:
                 # Legacy client (<1.0)
                 openai.api_key = api_key
@@ -184,6 +174,7 @@ class AIFieldMapper:
 
             logger.info("OpenAI API çağrısı hazırlanıyor...")
             if self._client is not None:
+                self._refresh_response_format_support()
                 if is_reasoning_model:
                     request_kwargs = {
                         "model": self.model,
@@ -310,6 +301,28 @@ class AIFieldMapper:
                 return True
 
         return keyword in signature.parameters
+
+    def _refresh_response_format_support(self) -> None:
+        """Recalculate response_format support flags for the current client."""
+
+        self._responses_accepts_response_format = False
+        self._chat_accepts_response_format = False
+
+        if self._client is None:
+            return
+
+        responses_create = getattr(getattr(self._client, "responses", None), "create", None)
+        self._responses_accepts_response_format = self._supports_kwarg(
+            responses_create,
+            "response_format",
+        )
+
+        chat_completions = getattr(getattr(self._client, "chat", None), "completions", None)
+        chat_create = getattr(chat_completions, "create", None)
+        self._chat_accepts_response_format = self._supports_kwarg(
+            chat_create,
+            "response_format",
+        )
 
     @staticmethod
     def _safe_dump_response(response: Any) -> str:
