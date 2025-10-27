@@ -97,6 +97,67 @@ def extract_reasoning_response_text(response: Any) -> Optional[str]:
     return None
 
 
+def _normalize_content_block(item: Any) -> Optional[Dict[str, Any]]:
+    """Convert mixed content inputs into Responses API content blocks."""
+
+    if item is None:
+        return None
+
+    if isinstance(item, dict):
+        block_type = item.get("type")
+        if block_type:
+            # Ensure text-like payloads have a "text" field populated.
+            if block_type == "text":
+                text_value = item.get("text")
+                if text_value is None:
+                    text_value = item.get("value")
+                    if text_value is not None:
+                        item = {**item, "text": str(text_value)}
+            return dict(item)
+
+        if "text" in item:
+            return {"type": "text", "text": str(item["text"])}
+        if "value" in item:
+            return {"type": "text", "text": str(item["value"])}
+
+        return {"type": "text", "text": str(item)}
+
+    if isinstance(item, str):
+        return {"type": "text", "text": item}
+
+    return {"type": "text", "text": str(item)}
+
+
+def _normalize_message_for_responses(message: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize a chat message into Responses API compatible structure."""
+
+    content = message.get("content")
+
+    blocks: List[Dict[str, Any]] = []
+    if isinstance(content, list):
+        for item in content:
+            block = _normalize_content_block(item)
+            if block is not None:
+                blocks.append(block)
+    elif content is not None:
+        block = _normalize_content_block(content)
+        if block is not None:
+            blocks.append(block)
+
+    normalized_message = {key: value for key, value in message.items() if key != "content"}
+    normalized_message["content"] = blocks
+
+    return normalized_message
+
+
+def _normalize_messages_for_responses(
+    messages: Sequence[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """Convert chat messages to the structure expected by Responses API."""
+
+    return [_normalize_message_for_responses(message) for message in messages]
+
+
 def _call_reasoning_model(
     client: Any,
     *,
@@ -111,7 +172,7 @@ def _call_reasoning_model(
 
     request_kwargs: Dict[str, Any] = {
         "model": model,
-        "input": messages,
+        "input": _normalize_messages_for_responses(messages),
         "reasoning": {"effort": reasoning_effort},
     }
 
