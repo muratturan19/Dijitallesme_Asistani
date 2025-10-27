@@ -188,6 +188,31 @@ class TemplateLearningService:
 
         return hints
 
+    def load_learned_hints(self, template_id: int) -> Dict[str, Dict[str, Any]]:
+        """Return persisted learning hints keyed by template field name."""
+
+        records = (
+            self.db.query(TemplateField.field_name, TemplateFieldHint.hint_payload)
+            .join(
+                TemplateFieldHint,
+                TemplateFieldHint.template_field_id == TemplateField.id,
+            )
+            .filter(
+                TemplateField.template_id == template_id,
+                TemplateFieldHint.hint_type == self._LEARNING_HINT_TYPE,
+            )
+            .all()
+        )
+
+        hints: Dict[str, Dict[str, Any]] = {}
+
+        for field_name, payload in records:
+            if not field_name or not isinstance(payload, dict):
+                continue
+            hints[field_name] = dict(payload)
+
+        return hints
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
