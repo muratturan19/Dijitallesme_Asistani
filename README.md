@@ -12,6 +12,12 @@ AI destekli belge dijitalleştirme ve veri çıkarma sistemi. Kullanıcılar bir
 - 📁 **Excel Dışa Aktarma**: Sonuçları Excel formatında indirin
 - 🌐 **İki Dilli Destek**: Türkçe ve İngilizce belgeler için tam UTF-8 karakter desteği ve dil odaklı işleme yetenekleri
 
+## Son Güncellemeler
+
+- ✍️ **Kullanıcı Düzeltmelerini Öğrenme**: `/api/learning` uç noktaları, tekil veya toplu kullanıcı düzeltmelerini kaydederek otomatik öğrenme sistemine veri sağlar.
+- 🧠 **Şablon Alan İpuçları**: Yeni `TemplateLearningService`, kullanıcı geri bildirimlerinden alan tipi, düzenli ifade ve örnek değer ipuçları üretip `TemplateFieldHint` kayıtlarında saklar.
+- 🔁 **Çalışma Zamanı Entegrasyonu**: Öğrenilmiş ipuçları, hem tek belge analizinde hem de toplu işlemede `build_runtime_configuration` tarafından otomatik olarak yüklenir ve AI alan eşlemesine aktarılır.
+
 ## Teknoloji Stack
 
 ### Backend
@@ -161,6 +167,14 @@ Dijitallesme_Asistani/
 └── README.md
 ```
 
+## Öğrenme Sistemi Nasıl Çalışır?
+
+1. **Düzeltmeleri Toplama**: Kullanıcılar, yanlış eşleşen alanları düzeltirken `/api/learning/corrections` veya `/api/learning/corrections/batch` uç noktalarını kullanarak geri bildirim bırakır. Her kayıt, hangi belge ve şablon alanının düzeltildiğini, orijinal ve düzeltilmiş değerleri ile birlikte saklar.
+2. **Geri Bildirimleri Değerlendirme**: `TemplateLearningService`, yinelenen girdileri otomatik olarak ayıklar, değer örneklerini normalize eder ve tarih, sayı gibi tip sinyallerini analiz ederek alana uygun ipuçları çıkarır. İlgili `TemplateField` için tip, regex ve örnek listeleri `TemplateFieldHint` tablosunda tutulur.
+3. **İpuçlarını Yenileme**: Belge işlemleri tamamlandığında arka planda bir görev tetiklenir ve aynı şablon için yeni ipuçları hesaplanır. Böylece bir sonraki belge analizinde en güncel örnekler hazır olur.
+4. **Çalışma Zamanına Enjeksiyon**: Şablon analizi veya toplu iş başlatılırken sistem, öğrenilmiş ipuçlarını `build_runtime_configuration` yardımıyla mevcut şablon kurallarıyla birleştirir. Üretilen ipuçları `AIFieldMapper` bileşenine iletilerek modelin alan değerlerini daha yüksek doğrulukla çıkarması sağlanır.
+5. **Sürekli İyileşme Döngüsü**: Yeni düzeltmeler kaydedildikçe ipuçları tekrar öğrenilir ve sistem, kullanıcı geri bildirimlerini döngüsel olarak kullanarak doğruluğunu artırır.
+
 ## API Dokümantasyonu
 
 Backend çalışırken Swagger UI'ye erişin:
@@ -177,6 +191,10 @@ Backend çalışırken Swagger UI'ye erişin:
 - `POST /api/batch/start` - Toplu işlem başlat
 - `GET /api/batch/status/{id}` - İşlem durumu
 - `GET /api/export/batch/{id}` - Excel indir
+- `POST /api/learning/corrections` - Tekil kullanıcı düzeltmesini kaydet
+- `POST /api/learning/corrections/batch` - Toplu kullanıcı düzeltmelerini kaydet
+- `GET /api/learning/hints/{template_id}` - Şablon için öğrenilmiş ipuçlarını getir
+- `GET /api/learning/corrections/history` - Düzeltme geçmişini listele
 
 ## Özelleştirme
 
