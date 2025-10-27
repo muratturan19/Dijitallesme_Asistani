@@ -44,6 +44,7 @@ class Settings:
     AI_PRIMARY_MODEL: str = os.getenv("AI_PRIMARY_MODEL", OPENAI_MODEL)
     AI_PRIMARY_TEMPERATURE: float = _get_env_float("AI_PRIMARY_TEMPERATURE", 0.8)
     AI_PRIMARY_CONTEXT_WINDOW: int = _get_env_int("AI_PRIMARY_CONTEXT_WINDOW", 2000)
+    AI_VISION_MODEL: str = os.getenv("AI_VISION_MODEL", "gpt-4o-mini")
 
     AI_HANDWRITING_MODEL: str = os.getenv("AI_HANDWRITING_MODEL", "gpt-5")
     AI_HANDWRITING_REASONING_EFFORT: str = os.getenv(

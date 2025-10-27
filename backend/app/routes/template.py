@@ -24,6 +24,10 @@ from ..core.handwriting_interpreter import (
     merge_field_mappings,
 )
 from ..core.template_learning_service import TemplateLearningService
+from ..core.smart_vision_fallback import (
+    SmartVisionFallback,
+    merge_ocr_and_vision_results,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -154,6 +158,30 @@ async def analyze_document(
                 detail="OpenAI API anahtarı yapılandırılmamış"
             )
 
+        vision_fallback = SmartVisionFallback(
+            settings.OPENAI_API_KEY,
+            settings.AI_VISION_MODEL,
+        )
+        vision_quality = vision_fallback.evaluate_quality(ocr_result)
+        vision_response: Optional[Dict[str, Any]] = None
+
+        if vision_quality.should_fallback:
+            logger.info(
+                "Vision fallback tetiklendi: belge=%s, sebepler=%s",
+                document.id,
+                vision_quality.reasons,
+            )
+            vision_response = vision_fallback.extract_with_vision(
+                document.file_path,
+                template_fields,
+                ocr_fallback=ocr_result.get('text', ''),
+            )
+        else:
+            logger.debug(
+                "Vision fallback gerekli görülmedi: score=%.2f",
+                vision_quality.score,
+            )
+
         ai_mapper = AIFieldMapper(
             settings.OPENAI_API_KEY,
             settings.AI_PRIMARY_MODEL,
@@ -196,6 +224,12 @@ async def analyze_document(
             }
 
         primary_field_mappings = mapping_result.get('field_mappings') or {}
+
+        if vision_response and vision_response.get('field_mappings'):
+            primary_field_mappings = merge_ocr_and_vision_results(
+                primary_field_mappings,
+                vision_response['field_mappings'],
+            )
         candidate_configs = determine_specialist_candidates(
             template_fields,
             primary_field_mappings,
@@ -308,6 +342,23 @@ async def analyze_document(
             'error': error_message
         }
 
+        vision_payload: Dict[str, Any] = {
+            'triggered': vision_quality.should_fallback,
+            'quality_score': vision_quality.score,
+            'reasons': vision_quality.reasons,
+            'model': settings.AI_VISION_MODEL,
+        }
+
+        if vision_response:
+            if vision_response.get('error'):
+                vision_payload['error'] = vision_response['error']
+            if vision_response.get('field_mappings'):
+                vision_payload['resolved_fields'] = sorted(
+                    vision_response['field_mappings'].keys()
+                )
+
+        response_payload['vision_fallback'] = vision_payload
+
         if candidate_configs:
             response_payload['specialist'] = {
                 'requested_fields': sorted(candidate_configs.keys()),
@@ -328,6 +379,9 @@ async def analyze_document(
                 'Analiz başarıyla tamamlandı - kaynak: '
                 f"{ocr_result.get('source', 'ocr')}"
             )
+
+        if vision_quality.should_fallback:
+            response_payload['message'] += " (Vision fallback uygulandı)"
 
         return response_payload
 
