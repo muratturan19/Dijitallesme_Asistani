@@ -9,6 +9,12 @@ const BatchUpload = ({ templateId, onComplete }) => {
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(false);
 
+  useEffect(() => {
+    setFiles([]);
+    setBatchJobId(null);
+    setStatus(null);
+  }, [templateId]);
+
   const onDrop = (acceptedFiles) => {
     setFiles([...files, ...acceptedFiles]);
     toast.success(`${acceptedFiles.length} dosya eklendi`);

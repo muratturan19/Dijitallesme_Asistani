@@ -278,6 +278,65 @@ export const deleteBatchJob = async (batchJobId) => {
   return response.data;
 };
 
+// Learning API
+export const submitLearningCorrection = async ({
+  documentId,
+  templateFieldId,
+  originalValue,
+  correctedValue,
+  context,
+  userId,
+}) => {
+  const payload = {
+    document_id: documentId,
+    corrected_value: correctedValue,
+  };
+
+  if (templateFieldId !== undefined) {
+    payload.template_field_id = templateFieldId;
+  }
+
+  if (originalValue !== undefined) {
+    payload.original_value = originalValue;
+  }
+
+  if (context !== undefined) {
+    payload.context = context;
+  }
+
+  if (userId !== undefined) {
+    payload.user_id = userId;
+  }
+
+  const response = await api.post('/api/learning/corrections', payload);
+  return response.data;
+};
+
+export const fetchLearnedHints = async (templateId, sampleLimit = 50) => {
+  const response = await api.get(`/api/learning/hints/${templateId}`, {
+    params: {
+      sample_limit: sampleLimit,
+    },
+  });
+
+  return response.data;
+};
+
+export const fetchCorrectionHistory = async ({ documentId, templateFieldId, limit = 50 }) => {
+  const params = { limit };
+
+  if (documentId !== undefined) {
+    params.document_id = documentId;
+  }
+
+  if (templateFieldId !== undefined) {
+    params.template_field_id = templateFieldId;
+  }
+
+  const response = await api.get('/api/learning/corrections/history', { params });
+  return response.data;
+};
+
 // Export API
 export const exportBatchResults = (batchJobId) => {
   return `${API_BASE_URL}/api/export/batch/${batchJobId}`;

@@ -1,15 +1,17 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import WelcomeWizard from './components/WelcomeWizard';
 import FieldMapper from './components/FieldMapper';
 import BatchUpload from './components/BatchUpload';
 import Dashboard from './components/Dashboard';
+import TemplateLearningView from './components/TemplateLearningView';
 
 function App() {
   const [currentView, setCurrentView] = useState('dashboard');
   const [wizardData, setWizardData] = useState(null);
   const [selectedTemplate, setSelectedTemplate] = useState(null);
+  const [dashboardSection, setDashboardSection] = useState('overview');
 
   const handleWizardComplete = (data) => {
     setWizardData(data);
@@ -22,6 +24,7 @@ function App() {
   };
 
   const handleBatchComplete = () => {
+    setDashboardSection('overview');
     setCurrentView('dashboard');
     setWizardData(null);
     setSelectedTemplate(null);
@@ -38,9 +41,33 @@ function App() {
     setCurrentView('batchUpload');
   };
 
+  const handleResumeBatch = (templateId) => {
+    setSelectedTemplate(templateId ? { id: templateId } : null);
+    setWizardData(null);
+    setCurrentView('batchUpload');
+  };
+
   const handleBackToWizard = () => {
     setCurrentView('wizard');
   };
+
+  const handleShowDashboard = (section = 'overview') => {
+    setDashboardSection(section);
+    setCurrentView('dashboard');
+  };
+
+  const handleOpenLearning = () => {
+    setCurrentView('learning');
+  };
+
+  const isViewActive = useMemo(
+    () => ({
+      wizard: currentView === 'wizard' || currentView === 'fieldMapper',
+      batch: currentView === 'batchUpload' || (currentView === 'dashboard' && dashboardSection === 'pending'),
+      learning: currentView === 'learning',
+    }),
+    [currentView, dashboardSection]
+  );
 
   return (
     <div className="min-h-screen bg-gray-100">
@@ -51,31 +78,41 @@ function App() {
             <div className="flex items-center">
               <h1
                 className="text-2xl font-bold text-primary-600 cursor-pointer"
-                onClick={() => setCurrentView('dashboard')}
+                onClick={() => handleShowDashboard('overview')}
               >
                 📄 Dijitalleşme Asistanı
               </h1>
             </div>
             <nav className="flex gap-4">
               <button
-                onClick={() => setCurrentView('dashboard')}
-                className={`px-4 py-2 rounded ${
-                  currentView === 'dashboard'
-                    ? 'bg-primary-600 text-white'
-                    : 'text-gray-600 hover:bg-gray-100'
-                }`}
-              >
-                Ana Sayfa
-              </button>
-              <button
                 onClick={handleNewTemplate}
                 className={`px-4 py-2 rounded ${
-                  currentView === 'wizard'
+                  isViewActive.wizard
                     ? 'bg-primary-600 text-white'
                     : 'text-gray-600 hover:bg-gray-100'
                 }`}
               >
-                Yeni Şablon
+                Yeni Şablon Oluştur
+              </button>
+              <button
+                onClick={() => handleShowDashboard('pending')}
+                className={`px-4 py-2 rounded ${
+                  isViewActive.batch
+                    ? 'bg-primary-600 text-white'
+                    : 'text-gray-600 hover:bg-gray-100'
+                }`}
+              >
+                Toplu Yükleme Devam
+              </button>
+              <button
+                onClick={handleOpenLearning}
+                className={`px-4 py-2 rounded ${
+                  isViewActive.learning
+                    ? 'bg-primary-600 text-white'
+                    : 'text-gray-600 hover:bg-gray-100'
+                }`}
+              >
+                Şablonu İyileştir
               </button>
             </nav>
           </div>
@@ -88,6 +125,8 @@ function App() {
           <Dashboard
             onNewTemplate={handleNewTemplate}
             onSelectTemplate={handleSelectTemplate}
+            onResumeBatch={handleResumeBatch}
+            activeSection={dashboardSection}
           />
         )}
 
@@ -108,6 +147,10 @@ function App() {
             templateId={wizardData?.templateId || selectedTemplate?.id}
             onComplete={handleBatchComplete}
           />
+        )}
+
+        {currentView === 'learning' && (
+          <TemplateLearningView onBack={() => handleShowDashboard('overview')} />
         )}
       </main>
 
