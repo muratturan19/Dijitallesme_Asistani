@@ -348,8 +348,9 @@ def test_template_analyze_includes_specialist_model_metadata() -> None:
                     "signature": {"value": "Ada", "confidence": 0.91}
                 },
                 "model_metadata": {
-                    "model": "gpt-4.1-mini",
+                    "model": "gpt-5",
                     "transport": "responses",
+                    "reasoning_effort": "high",
                     "reasoning_parameters": {"top_p": 0.3},
                 },
             }
@@ -400,5 +401,6 @@ def test_template_analyze_includes_specialist_model_metadata() -> None:
 
     assert "specialist" in result
     specialist = result["specialist"]
-    assert specialist["model"]["model"] == "gpt-4.1-mini"
+    assert specialist["model"]["model"] == "gpt-5"
+    assert specialist["model"]["reasoning_effort"] == "high"
     assert specialist["model"]["reasoning_parameters"]["top_p"] == 0.3

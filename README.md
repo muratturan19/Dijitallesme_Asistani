@@ -5,7 +5,7 @@ AI destekli belge dijitalleştirme ve veri çıkarma sistemi. Kullanıcılar bir
 ## Özellikler
 
 - 📄 **OCR ile Metin Çıkarma**: Tesseract kullanarak PDF ve görüntülerden metin çıkarma
-- 🤖 **AI Tabanlı Alan Eşleştirme**: OPENAI_MODEL ortam değişkeniyle seçilebilen OpenAI modelleri (varsayılan `gpt-5`) ile akıllı alan tanıma
+- 🤖 **AI Tabanlı Alan Eşleştirme**: OPENAI_MODEL ortam değişkeniyle seçilebilen OpenAI modelleri (varsayılan `gpt-4o`) ile akıllı alan tanıma
 - 📊 **Özelleştirilebilir Şablonlar**: Excel şablonları ile kendi alanlarınızı tanımlayın
 - 🔄 **Toplu İşleme**: Yüzlerce belgeyi aynı anda işleyin
 - ✅ **Güven Skorları**: Düşük güvenilirlikte alanları gözden geçirin
@@ -24,7 +24,7 @@ AI destekli belge dijitalleştirme ve veri çıkarma sistemi. Kullanıcılar bir
 - **Framework**: Python 3.13, FastAPI
 - **OCR**: Tesseract (pytesseract)
 - **Görüntü İşleme**: Pillow, OpenCV
-- **AI**: OPENAI_MODEL ortam değişkeniyle seçilen OpenAI sohbet modeli (varsayılan `gpt-5`)
+- **AI**: OPENAI_MODEL ortam değişkeniyle seçilen OpenAI sohbet modeli (varsayılan `gpt-4o`)
 - **Veritabanı**: SQLite (SQLAlchemy)
 - **Excel**: openpyxl
 
@@ -57,11 +57,11 @@ cd Dijitallesme_Asistani
 cp .env.example .env
 ```
 
-`.env` dosyasını düzenleyin ve gerekli bilgileri girin. `OPENAI_MODEL` ayarı ile erişebildiğiniz OpenAI sohbet modelini seçebilir, varsayılan olarak `gpt-5` kullanabilirsiniz:
+`.env` dosyasını düzenleyin ve gerekli bilgileri girin. `OPENAI_MODEL` ayarı ile erişebildiğiniz OpenAI sohbet modelini seçebilir, varsayılan olarak `gpt-4o` kullanabilirsiniz:
 
 ```env
 OPENAI_API_KEY=your_openai_api_key_here
-OPENAI_MODEL=gpt-5
+OPENAI_MODEL=gpt-4o
 TESSERACT_CMD=C:\Program Files\Tesseract-OCR\tesseract.exe  # Windows
 ```
 
@@ -200,16 +200,18 @@ Backend çalışırken Swagger UI'ye erişin:
 
 ### LLM2 (Uzman Model) Yapılandırması
 
-Uygulama, birincil alan eşlemesi için `AI_PRIMARY_MODEL` (varsayılan `gpt-5`) ve el
+Uygulama, birincil alan eşlemesi için `AI_PRIMARY_MODEL` (varsayılan `gpt-4o`) ve el
 yazısı odaklı düzeltmeler için ikinci bir LLM (LLM2) kullanır. Uzman model varsayılan
-olarak `gpt-4.1-mini` seçilidir ve Responses API üzerinden çalışırken sıcaklık
+olarak `gpt-5` seçilidir ve Responses API üzerinden çalışırken sıcaklık
 değerinizi `top_p` parametresine map eder. Aşağıdaki ortam değişkenleri ile LLM2'yi
 özelleştirebilirsiniz:
 
-- `AI_HANDWRITING_MODEL`: Uzman model adı (`gpt-4.1-mini` varsayılan).
+- `AI_HANDWRITING_MODEL`: Uzman model adı (`gpt-5` varsayılan).
 - `AI_HANDWRITING_TEMPERATURE`: Responses API çağrılarında `top_p` olarak uygulanan
   yaratıcı odaklı sıcaklık.
 - `AI_HANDWRITING_CONTEXT_WINDOW`: Uzmanın alabileceği maksimum çıktı token sayısı.
+- `AI_HANDWRITING_REASONING_EFFORT`: Responses API `reasoning.effort` değeri (`high`
+  varsayılan).
 
 `template/analyze` uç noktasının yanıtı, arayüzün hangi modelin kullanıldığını
 göstermesine yardımcı olmak için `specialist.model` alanında etkin model/parametre

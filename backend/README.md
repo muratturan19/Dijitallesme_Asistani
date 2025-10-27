@@ -5,7 +5,7 @@ FastAPI tabanlı belge dijitalleştirme ve veri çıkarma API'si. Türkçe ve İ
 ## Özellikler
 
 - 📄 PDF ve görüntü dosyalarından OCR ile metin çıkarma
-- 🤖 OPENAI_MODEL ortam değişkeniyle seçilebilen OpenAI modelleri (varsayılan `gpt-5`) ile akıllı alan eşleştirme
+- 🤖 OPENAI_MODEL ortam değişkeniyle seçilebilen OpenAI modelleri (varsayılan `gpt-4o`) ile akıllı alan eşleştirme
 - 📊 Excel şablonları ile özelleştirilebilir veri çıkarma
 - 🔄 Toplu belge işleme
 - 📈 Güven skorları ve doğrulama sistemi
@@ -48,7 +48,7 @@ brew install tesseract-lang
 
 ### 3. Ortam Değişkenleri
 
-`.env.example` dosyasını `.env` olarak kopyalayın ve düzenleyin. `OPENAI_MODEL` değişkeniyle erişebildiğiniz sohbet modelini seçebilir, varsayılan `gpt-5` değerini kullanabilirsiniz:
+`.env.example` dosyasını `.env` olarak kopyalayın ve düzenleyin. `OPENAI_MODEL` değişkeniyle erişebildiğiniz sohbet modelini seçebilir, varsayılan `gpt-4o` değerini kullanabilirsiniz:
 
 ```bash
 cp ../.env.example .env
@@ -57,7 +57,7 @@ cp ../.env.example .env
 Gerekli ayarlar:
 ```
 OPENAI_API_KEY=your_api_key_here
-OPENAI_MODEL=gpt-5
+OPENAI_MODEL=gpt-4o
 TESSERACT_CMD=C:\Program Files\Tesseract-OCR\tesseract.exe  # Windows
 ```
 
