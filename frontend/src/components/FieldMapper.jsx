@@ -82,6 +82,17 @@ const FieldMapper = ({ data, onNext, onBack }) => {
     }
   };
 
+  const getTextareaRows = (value) => {
+    if (!value) {
+      return 3;
+    }
+
+    const lines = value.split('\n').length;
+    const approxLengthRows = Math.ceil(value.length / 80);
+
+    return Math.min(12, Math.max(3, lines, approxLengthRows));
+  };
+
   const handleValueChange = (fieldName, newValue) => {
     setMappings({
       ...mappings,
@@ -314,14 +325,34 @@ const FieldMapper = ({ data, onNext, onBack }) => {
                     })()}
                   </td>
                   <td className="py-3 px-4">
-                    <input
-                      type="text"
-                      value={fieldData.value || ''}
-                      onChange={(e) => handleValueChange(fieldName, e.target.value)}
-                      className="input text-sm"
-                      disabled={!activeFieldNames.has(fieldName)}
-                      placeholder="Değer giriniz"
-                    />
+                    {(() => {
+                      const value = fieldData.value || '';
+                      const isLongText = value.includes('\n') || value.length > 120;
+
+                      if (isLongText) {
+                        return (
+                          <textarea
+                            value={value}
+                            onChange={(e) => handleValueChange(fieldName, e.target.value)}
+                            className="input text-sm resize-y min-h-[120px]"
+                            disabled={!activeFieldNames.has(fieldName)}
+                            placeholder="Değer giriniz"
+                            rows={getTextareaRows(value)}
+                          />
+                        );
+                      }
+
+                      return (
+                        <input
+                          type="text"
+                          value={value}
+                          onChange={(e) => handleValueChange(fieldName, e.target.value)}
+                          className="input text-sm"
+                          disabled={!activeFieldNames.has(fieldName)}
+                          placeholder="Değer giriniz"
+                        />
+                      );
+                    })()}
                     {fieldData.source && (
                       <p className="text-xs text-gray-500 mt-1">{fieldData.source}</p>
                     )}
