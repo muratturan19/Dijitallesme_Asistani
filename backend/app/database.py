@@ -38,7 +38,7 @@ class Template(Base):
     __tablename__ = "templates"
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(255), nullable=False)
+    name = Column(String(255), nullable=False, unique=True)
     version = Column(String(50), default="1.0")
     target_fields = Column(JSON, nullable=False)  # List of field definitions
     extraction_rules = Column(JSON, nullable=True)  # AI-generated mapping rules
