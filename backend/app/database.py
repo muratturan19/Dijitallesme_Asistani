@@ -3,6 +3,7 @@ from sqlalchemy import (
     Boolean,
     Column,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     JSON,
@@ -70,6 +71,10 @@ class TemplateField(Base):
     auto_learned_type = Column(String(50), nullable=True)
     learning_enabled = Column(Boolean, default=True, nullable=False, server_default=text("1"))
     last_learned_at = Column(DateTime, nullable=True)
+    processing_mode = Column(String(50), nullable=False, default="auto", server_default=text("'auto'"))
+    llm_tier = Column(String(50), nullable=False, default="standard", server_default=text("'standard'"))
+    handwriting_threshold = Column(Float, nullable=True, default=None)
+    auto_detected_handwriting = Column(Boolean, nullable=False, default=False, server_default=text("0"))
 
     # Relationships
     template = relationship("Template", back_populates="fields")

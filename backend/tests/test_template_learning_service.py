@@ -53,6 +53,16 @@ def _prepare_template_environment(db: Session):
     return template, field, document
 
 
+def test_template_field_defaults_initialized(db_session: Session):
+    _, field, _ = _prepare_template_environment(db_session)
+    db_session.refresh(field)
+
+    assert field.processing_mode == "auto"
+    assert field.llm_tier == "standard"
+    assert field.handwriting_threshold is None
+    assert field.auto_detected_handwriting is False
+
+
 def test_record_correction_persists_feedback(db_session: Session):
     _, field, document = _prepare_template_environment(db_session)
     service = TemplateLearningService(db_session)

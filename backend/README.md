@@ -101,6 +101,14 @@ API şu adreste çalışacaktır: http://localhost:8000
 - `GET /api/template/{id}` - Şablon detayı
 - `DELETE /api/template/{id}` - Şablon silme
 
+#### Şablon Alan Yapısı
+`target_fields` koleksiyonundaki her alan için kullanılan anahtarlar:
+
+- `processing_mode` – OCR/LLM işleme stratejisini belirtir (`auto`, `ocr`, `llm` gibi değerler). Varsayılan `auto`.
+- `llm_tier` – Alanın hangi LLM katmanında işleneceğini tanımlar (varsayılan `standard`).
+- `handwriting_threshold` – El yazısı algılama eşiği (0 ile 1 arasında ondalık bir değer). Boş bırakılabilir.
+- `auto_detected_handwriting` – Sistem tarafından alanın el yazısı olarak işaretlenip işaretlenmediğini belirtir (varsayılan `false`).
+
 ### Batch
 - `POST /api/batch/start` - Toplu işlem başlatma
 - `GET /api/batch/status/{id}` - İşlem durumu

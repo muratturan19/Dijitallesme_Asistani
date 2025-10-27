@@ -321,6 +321,10 @@ class TemplateFieldCreate(BaseModel):
     ocr_psm: Optional[int] = None
     ocr_roi: Optional[str] = None
     enabled: Optional[bool] = True
+    processing_mode: str = Field(default="auto", min_length=1)
+    llm_tier: str = Field(default="standard", min_length=1)
+    handwriting_threshold: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    auto_detected_handwriting: bool = False
 
 
 class TemplateFieldResponse(TemplateFieldCreate):
