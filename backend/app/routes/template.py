@@ -206,6 +206,7 @@ async def analyze_document(
         specialist_mapping: Dict[str, Any] = {}
         specialist_usage: Optional[Dict[str, Any]] = None
         specialist_error: Optional[str] = None
+        specialist_metadata: Optional[Dict[str, Any]] = None
 
         if candidate_configs:
             logger.info(
@@ -227,6 +228,7 @@ async def analyze_document(
             specialist_mapping = specialist_response.get('field_mappings') or {}
             specialist_usage = specialist_response.get('usage')
             specialist_error = specialist_response.get('error')
+            specialist_metadata = specialist_response.get('model_metadata')
 
             if specialist_error:
                 logger.warning(
@@ -313,6 +315,8 @@ async def analyze_document(
                 'usage': specialist_usage,
                 'error': specialist_error,
             }
+            if specialist_metadata:
+                response_payload['specialist']['model'] = specialist_metadata
 
         if error_message:
             response_payload['message'] = (

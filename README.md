@@ -198,6 +198,24 @@ Backend çalışırken Swagger UI'ye erişin:
 
 ## Özelleştirme
 
+### LLM2 (Uzman Model) Yapılandırması
+
+Uygulama, birincil alan eşlemesi için `AI_PRIMARY_MODEL` (varsayılan `gpt-5`) ve el
+yazısı odaklı düzeltmeler için ikinci bir LLM (LLM2) kullanır. Uzman model varsayılan
+olarak `gpt-4.1-mini` seçilidir ve Responses API üzerinden çalışırken sıcaklık
+değerinizi `top_p` parametresine map eder. Aşağıdaki ortam değişkenleri ile LLM2'yi
+özelleştirebilirsiniz:
+
+- `AI_HANDWRITING_MODEL`: Uzman model adı (`gpt-4.1-mini` varsayılan).
+- `AI_HANDWRITING_TEMPERATURE`: Responses API çağrılarında `top_p` olarak uygulanan
+  yaratıcı odaklı sıcaklık.
+- `AI_HANDWRITING_CONTEXT_WINDOW`: Uzmanın alabileceği maksimum çıktı token sayısı.
+
+`template/analyze` uç noktasının yanıtı, arayüzün hangi modelin kullanıldığını
+göstermesine yardımcı olmak için `specialist.model` alanında etkin model/parametre
+bilgisini içerir. Bu sayede farklı model kombinasyonlarının sonuçlarını
+karşılaştırabilir ve UI üzerinde görünür kılabilirsiniz.
+
 ### Yeni Alan Tipleri Eklemek
 
 `backend/app/core/template_manager.py` içinde `_infer_data_type()` fonksiyonunu düzenleyin.

@@ -1,7 +1,11 @@
 # -*- coding: utf-8 -*-
+import asyncio
 import json
 from pathlib import Path
 import sys
+from types import SimpleNamespace
+from typing import Any, Dict, Optional
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -144,3 +148,257 @@ def test_handwriting_prompt_includes_field_level_context() -> None:
     primary_snippet = field_data['targeted_snippets'][0]
     assert primary_snippet['text'].startswith('Signed by A.L.')
     assert primary_snippet['bounding_box']['w'] == 90
+
+
+def test_reasoning_model_applies_temperature_via_top_p() -> None:
+    interpreter = HandwritingInterpreter(
+        api_key="",
+        model="gpt-5.1-mini",
+        temperature=0.42,
+        context_window=256,
+    )
+
+    interpreter._has_valid_api_key = True  # type: ignore[attr-defined]
+    interpreter._client = object()  # type: ignore[attr-defined]
+
+    captured: Dict[str, Any] = {}
+
+    def fake_call(
+        client: Any,
+        *,
+        model: str,
+        messages: Any,
+        response_format: Optional[Dict[str, Any]] = None,
+        temperature: Optional[float] = None,
+        reasoning_effort: str = "medium",
+        extra_kwargs: Optional[Dict[str, Any]] = None,
+    ) -> Any:
+        captured["model"] = model
+        captured["temperature"] = temperature
+        captured["extra_kwargs"] = extra_kwargs
+
+        response_payload = {
+            "field_mappings": {
+                "signature": {"value": "Ada", "confidence": 0.88},
+            }
+        }
+
+        return {
+            "output": [
+                {
+                    "content": [
+                        {"text": {"value": json.dumps(response_payload)}}
+                    ]
+                }
+            ]
+        }
+
+    from app.core import handwriting_interpreter as module
+
+    original_call = module.call_reasoning_model
+    module.call_reasoning_model = fake_call
+
+    try:
+        result = interpreter.interpret_fields(
+            {"text": "dummy", "field_results": {}},
+            {"signature": {"field_name": "signature"}},
+            {},
+        )
+    finally:
+        module.call_reasoning_model = original_call
+
+    assert captured["model"] == "gpt-5.1-mini"
+    assert captured["temperature"] is None
+    assert captured["extra_kwargs"] is not None
+    assert abs(captured["extra_kwargs"]["top_p"] - 0.42) < 1e-6
+    assert captured["extra_kwargs"]["max_output_tokens"] == 256
+
+    metadata = result.get("model_metadata") or {}
+    assert metadata.get("transport") == "responses"
+    reasoning_params = metadata.get("reasoning_parameters") or {}
+    assert abs(reasoning_params.get("top_p", 0.0) - 0.42) < 1e-6
+    assert reasoning_params.get("max_output_tokens") == 256
+
+
+def test_template_analyze_includes_specialist_model_metadata() -> None:
+    from app.config import settings
+    from app.routes import template as template_module
+
+    class FakeDocument:
+        def __init__(self) -> None:
+            self.id = 1
+            self.status = "pending"
+            self.file_path = "dummy.pdf"
+            self.template_id = 99
+
+    class FakeTemplate:
+        def __init__(self) -> None:
+            self.id = 99
+            self.target_fields = [
+                {"field_name": "signature", "enabled": True, "llm_tier": "handwriting"}
+            ]
+            self.extraction_rules = {}
+
+    class FakeQuery:
+        def __init__(self, result: Any) -> None:
+            self._result = result
+
+        def filter(self, *args: Any, **kwargs: Any) -> "FakeQuery":
+            return self
+
+        def first(self) -> Any:
+            return self._result
+
+    class FakeSession:
+        def __init__(self, document: FakeDocument) -> None:
+            self._document = document
+            self.commits = 0
+
+        def query(self, model: Any) -> FakeQuery:
+            if getattr(model, "__name__", "") == "Document":
+                return FakeQuery(self._document)
+            return FakeQuery(None)
+
+        def commit(self) -> None:
+            self.commits += 1
+
+        def add(self, _obj: Any) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    class FakeTemplateManager:
+        def __init__(self, _db: Any) -> None:
+            pass
+
+        def get_template(self, _template_id: int) -> FakeTemplate:
+            return FakeTemplate()
+
+    class FakeLearningService:
+        def __init__(self, _db: Any) -> None:
+            pass
+
+        def load_learned_hints(self, _template_id: int) -> Dict[str, Dict[str, Any]]:
+            return {}
+
+    class FakeImageProcessor:
+        def __init__(self, _temp_dir: Any) -> None:
+            pass
+
+        def process_file(self, _path: str, *, profile: Dict[str, Any]) -> Any:
+            return SimpleNamespace(
+                text="",
+                image_path="image.png",
+                original_image_path=None,
+            )
+
+    class FakeOCREngine:
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            pass
+
+        def extract_text(self, _image_path: str, *, options: Dict[str, Any]) -> Dict[str, Any]:
+            return {
+                "text": "primary text",
+                "word_count": 2,
+                "average_confidence": 0.3,
+                "field_results": {},
+            }
+
+    class FakeAIFieldMapper:
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            pass
+
+        def map_fields(
+            self,
+            _text: str,
+            _template_fields: Any,
+            _ocr_result: Dict[str, Any],
+            *,
+            field_hints: Optional[Dict[str, Any]] = None,
+        ) -> Dict[str, Any]:
+            return {
+                "field_mappings": {
+                    "signature": {
+                        "value": None,
+                        "confidence": 0.2,
+                        "source": "llm-primary",
+                    }
+                }
+            }
+
+        def calculate_field_status(self, confidence: float) -> str:
+            return "low" if confidence < 0.5 else "high"
+
+    class FakeInterpreter:
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            pass
+
+        def interpret_fields(
+            self,
+            _ocr_result: Dict[str, Any],
+            _field_configs: Dict[str, Any],
+            _primary_mapping: Dict[str, Any],
+            *,
+            field_hints: Optional[Dict[str, Any]] = None,
+            document_info: Optional[Dict[str, Any]] = None,
+        ) -> Dict[str, Any]:
+            return {
+                "field_mappings": {
+                    "signature": {"value": "Ada", "confidence": 0.91}
+                },
+                "model_metadata": {
+                    "model": "gpt-4.1-mini",
+                    "transport": "responses",
+                    "reasoning_parameters": {"top_p": 0.3},
+                },
+            }
+
+    def fake_runtime_config(_rules: Dict[str, Any], _lang: str, *, learned_hints: Any) -> Dict[str, Any]:
+        return {
+            "preprocessing_profile": {},
+            "ocr_options": {},
+            "field_rules": {"signature": {}},
+            "field_hints": {},
+            "summary": ["default"],
+            "rules": SimpleNamespace(
+                ocr=SimpleNamespace(tesseract_cmd=settings.TESSERACT_CMD)
+            ),
+            "language": settings.TESSERACT_LANG,
+        }
+
+    def fake_run_field_level_ocr(*_args: Any, **_kwargs: Any) -> Dict[str, Any]:
+        return {}
+
+    original_api_key = settings.OPENAI_API_KEY
+    settings.OPENAI_API_KEY = "test-key"
+
+    document = FakeDocument()
+    fake_db = FakeSession(document)
+    request = SimpleNamespace(document_id=document.id, template_id=document.template_id)
+    result: Dict[str, Any] = {}
+
+    try:
+        with patch("app.routes.template.TemplateManager", FakeTemplateManager), patch(
+            "app.routes.template.TemplateLearningService", FakeLearningService
+        ), patch(
+            "app.routes.template.build_runtime_configuration", fake_runtime_config
+        ), patch(
+            "app.routes.template.ImageProcessor", FakeImageProcessor
+        ), patch(
+            "app.routes.template.OCREngine", FakeOCREngine
+        ), patch(
+            "app.routes.template.AIFieldMapper", FakeAIFieldMapper
+        ), patch(
+            "app.routes.template.HandwritingInterpreter", FakeInterpreter
+        ), patch(
+            "app.routes.template.run_field_level_ocr", fake_run_field_level_ocr
+        ):
+            result = asyncio.run(template_module.analyze_document(request, db=fake_db))
+    finally:
+        settings.OPENAI_API_KEY = original_api_key
+
+    assert "specialist" in result
+    specialist = result["specialist"]
+    assert specialist["model"]["model"] == "gpt-4.1-mini"
+    assert specialist["model"]["reasoning_parameters"]["top_p"] == 0.3
