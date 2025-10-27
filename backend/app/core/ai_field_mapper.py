@@ -139,7 +139,7 @@ class AIFieldMapper:
             source = (ocr_data or {}).get('source', 'unknown') if ocr_data else 'unknown'
             is_reasoning_model = str(self.model).startswith("gpt-5")
             max_completion_tokens = max(1, int(self.context_window or 2000))
-            temperature = self.temperature
+            temperature = None if is_reasoning_model else self.temperature
             response_format = {"type": "json_object"}
             token_limit_for_logging = None if is_reasoning_model else max_completion_tokens
 
@@ -148,7 +148,7 @@ class AIFieldMapper:
                 self.model,
                 response_format.get('type'),
                 token_limit_for_logging,
-                temperature,
+                temperature if temperature is not None else "auto",
             )
             logger.info("OCR kaynağı: %s", source)
             logger.debug(
@@ -181,17 +181,19 @@ class AIFieldMapper:
                     request_kwargs = {
                         "model": self.model,
                         "input": messages,
-                        "temperature": temperature,
                         "text": {"format": {"type": "json_object"}},
                         "reasoning": {"effort": "medium"},
                     }
+                    if temperature is not None:
+                        request_kwargs["temperature"] = temperature
                     response = self._client.responses.create(**request_kwargs)
                 else:
                     request_kwargs = {
                         "model": self.model,
                         "messages": messages,
-                        "temperature": temperature,
                     }
+                    if temperature is not None:
+                        request_kwargs["temperature"] = temperature
                     if response_format and self._chat_accepts_response_format:
                         request_kwargs["response_format"] = response_format
                     else:
@@ -206,8 +208,9 @@ class AIFieldMapper:
                 request_kwargs = {
                     "model": self.model,
                     "messages": messages,
-                    "temperature": temperature,
                 }
+                if temperature is not None:
+                    request_kwargs["temperature"] = temperature
                 if (not is_reasoning_model) and max_completion_tokens is not None:
                     request_kwargs["max_tokens"] = max_completion_tokens
 
