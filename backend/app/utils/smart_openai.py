@@ -207,21 +207,38 @@ def _call_reasoning_model(
         "reasoning": {"effort": reasoning_effort},
     }
 
-    if response_format and _method_accepts_keyword(
-        getattr(getattr(client, "responses", None), "create", None),
-        "response_format",
-    ):
-        request_kwargs["response_format"] = response_format
-    elif response_format:
-        logger.debug(
-            "Responses.create response_format desteği yok, parametre atlandı."
-        )
+    if response_format:
+        if isinstance(response_format, dict):
+            response_format_type = response_format.get("type")
+        else:
+            response_format_type = None
+        if response_format_type == "json_object":
+            request_kwargs["text"] = {"format": {"type": "json_object"}}
+            logger.debug("Responses.create response_format json_object metne dönüştürüldü.")
+        else:
+            logger.debug(
+                "Responses.create response_format desteklenmiyor, parametre atlandı: type=%s",
+                response_format_type,
+            )
 
     if temperature is not None:
-        request_kwargs["temperature"] = temperature
+        logger.debug("Reasoning modeli temperature parametresi yok sayıldı: %s", temperature)
 
     if extra_kwargs:
-        request_kwargs.update(extra_kwargs)
+        unsupported_kwargs = {"temperature", "max_completion_tokens", "max_tokens"}
+        filtered_kwargs = {
+            key: value
+            for key, value in extra_kwargs.items()
+            if key not in unsupported_kwargs
+        }
+        dropped = set(extra_kwargs) - set(filtered_kwargs)
+        if dropped:
+            logger.debug(
+                "Reasoning modeli desteklenmeyen ek parametreler yok sayıldı: %s",
+                ", ".join(sorted(dropped)),
+            )
+        if filtered_kwargs:
+            request_kwargs.update(filtered_kwargs)
 
     logger.debug(
         "Calling reasoning model: model=%s, has_response_format=%s", model, bool(response_format)
