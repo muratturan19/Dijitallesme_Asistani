@@ -10,4 +10,4 @@ openpyxl
 openai
 python-dotenv
 aiofiles
-alembic
+alembic>=1.13.0
