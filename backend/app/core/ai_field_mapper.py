@@ -28,7 +28,14 @@ logger = logging.getLogger(__name__)
 class AIFieldMapper:
     """Uses OpenAI GPT models (default: gpt-5) to map OCR text to template fields"""
 
-    def __init__(self, api_key: str, model: str = settings.OPENAI_MODEL):
+    def __init__(
+        self,
+        api_key: str,
+        model: str = settings.AI_PRIMARY_MODEL,
+        *,
+        temperature: Optional[float] = None,
+        context_window: Optional[int] = None,
+    ):
         """
         Initialize AI field mapper
 
@@ -38,6 +45,14 @@ class AIFieldMapper:
         """
         self.api_key = api_key
         self.model = model
+        self.temperature = (
+            settings.AI_PRIMARY_TEMPERATURE if temperature is None else temperature
+        )
+        self.context_window = (
+            settings.AI_PRIMARY_CONTEXT_WINDOW
+            if context_window is None
+            else context_window
+        )
         self._has_valid_api_key = bool(api_key and api_key.strip())
 
         self._client = None
@@ -123,8 +138,8 @@ class AIFieldMapper:
 
             source = (ocr_data or {}).get('source', 'unknown') if ocr_data else 'unknown'
             is_reasoning_model = str(self.model).startswith("gpt-5")
-            max_completion_tokens = 2000
-            temperature = 1.0
+            max_completion_tokens = max(1, int(self.context_window or 2000))
+            temperature = self.temperature
             response_format = {"type": "json_object"}
             token_limit_for_logging = None if is_reasoning_model else max_completion_tokens
 

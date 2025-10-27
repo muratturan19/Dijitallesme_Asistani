@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from typing import Dict, Any, List, Optional
 import logging
 import asyncio
+import time
 
 from ..config import settings
 from ..database import get_db, BatchJob, Document, ExtractedData, Template
@@ -15,6 +16,12 @@ from .ocr_utils import (
     run_field_level_ocr
 )
 from ..core.ai_field_mapper import AIFieldMapper
+from ..core.handwriting_interpreter import (
+    ExpertModelExecutor,
+    HandwritingInterpreter,
+    determine_specialist_candidates,
+    merge_field_mappings,
+)
 from ..core.template_learning_service import TemplateLearningService
 
 logger = logging.getLogger(__name__)
@@ -33,6 +40,7 @@ async def _run_learning_refresh(db_path: str, template_id: int) -> None:
     engine = create_engine(db_path, connect_args={"check_same_thread": False})
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     db = SessionLocal()
+    process_started = time.perf_counter()
 
     try:
         service = TemplateLearningService(db)
@@ -155,7 +163,12 @@ async def process_document_task(
             raise Exception("OCR hatası")
 
         # AI Mapping
-        ai_mapper = AIFieldMapper(settings.OPENAI_API_KEY, settings.OPENAI_MODEL)
+        ai_mapper = AIFieldMapper(
+            settings.OPENAI_API_KEY,
+            settings.AI_PRIMARY_MODEL,
+            temperature=settings.AI_PRIMARY_TEMPERATURE,
+            context_window=settings.AI_PRIMARY_CONTEXT_WINDOW,
+        )
         if (
             field_rules
             and processed_document
@@ -185,13 +198,95 @@ async def process_document_task(
             field_hints=field_hints
         )
 
+        primary_field_mappings = mapping_result.get('field_mappings') or {}
+        candidate_configs = determine_specialist_candidates(
+            template.target_fields,
+            primary_field_mappings,
+            low_confidence_floor=settings.AI_HANDWRITING_LOW_CONFIDENCE_THRESHOLD,
+            allowed_tiers=settings.AI_HANDWRITING_TIERS,
+        )
+
+        specialist_mapping: Dict[str, Any] = {}
+        specialist_results: List[Dict[str, Any]] = []
+        specialist_error: Optional[str] = None
+
+        if candidate_configs:
+            logger.info(
+                "Belge %s için uzman modeli tetiklendi: alanlar=%s",
+                document.id,
+                sorted(candidate_configs.keys()),
+            )
+            interpreter = HandwritingInterpreter(settings.OPENAI_API_KEY)
+            executor = ExpertModelExecutor(
+                interpreter,
+                max_workers=settings.AI_HANDWRITING_MAX_WORKERS,
+            )
+            try:
+                specialist_results = executor.dispatch([
+                    {
+                        'ocr_result': ocr_result,
+                        'field_configs': candidate_configs,
+                        'primary_mapping': primary_field_mappings,
+                        'field_hints': field_hints,
+                        'document_info': {
+                            'document_id': document.id,
+                            'template_id': template.id,
+                            'batch_job_id': document.batch_job_id,
+                        },
+                    }
+                ])
+            finally:
+                executor.close()
+
+            if specialist_results:
+                specialist_mapping = specialist_results[0].get('field_mappings') or {}
+                specialist_error = specialist_results[0].get('error')
+                if specialist_error:
+                    logger.warning(
+                        "Uzman modeli hatası (doc=%s): %s",
+                        document.id,
+                        specialist_error,
+                    )
+            else:
+                logger.warning(
+                    "Uzman modeli sonuç döndürmedi: belge=%s",
+                    document.id,
+                )
+
+        merged_mappings = merge_field_mappings(
+            primary_field_mappings,
+            specialist_mapping,
+        )
+
+        for field in template.target_fields or []:
+            name = field.get('field_name')
+            if name and name not in merged_mappings:
+                merged_mappings[name] = {
+                    'value': None,
+                    'confidence': 0.0,
+                    'source': 'unmapped',
+                }
+
         # Extract field values and confidence scores
         field_values = {}
         confidence_scores = {}
 
-        for field_name, field_data in mapping_result['field_mappings'].items():
-            field_values[field_name] = field_data['value']
-            confidence_scores[field_name] = field_data['confidence']
+        for field_name, field_data in merged_mappings.items():
+            field_values[field_name] = field_data.get('value')
+            confidence_scores[field_name] = field_data.get('confidence', 0.0)
+
+        if specialist_results:
+            estimated_cost = sum(
+                result.get('estimated_cost', 0.0)
+                for result in specialist_results
+                if isinstance(result, dict)
+            )
+            if estimated_cost:
+                logger.info(
+                    "Uzman modeli tahmini maliyeti: doc=%s, cost=$%.4f",
+                    document.id,
+                    estimated_cost,
+                )
 
         # Save extracted data
         extracted_data = ExtractedData(
@@ -213,6 +308,13 @@ async def process_document_task(
             ocr_result.get('source', 'ocr')
         )
         logger.debug("Uygulanan kurallar: %s", applied_rules)
+
+        processing_duration = time.perf_counter() - process_started
+        logger.info(
+            "Belge işleme süresi: %.3fs (doc=%s)",
+            processing_duration,
+            document.id,
+        )
 
         _schedule_learning_refresh(db_path, template_id)
 

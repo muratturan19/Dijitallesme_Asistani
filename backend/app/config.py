@@ -1,11 +1,38 @@
 # -*- coding: utf-8 -*-
 import os
 import shutil
+from typing import Tuple
 from dotenv import load_dotenv
 from pathlib import Path
 
 # Load environment variables
 load_dotenv()
+
+
+def _get_env_float(name: str, default: float) -> float:
+    """Safely parse float values from environment variables."""
+
+    value = os.getenv(name)
+    if value in (None, ""):
+        return default
+
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _get_env_int(name: str, default: int) -> int:
+    """Safely parse integer values from environment variables."""
+
+    value = os.getenv(name)
+    if value in (None, ""):
+        return default
+
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 
 class Settings:
@@ -14,6 +41,22 @@ class Settings:
     # OpenAI Configuration
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-5")
+    AI_PRIMARY_MODEL: str = os.getenv("AI_PRIMARY_MODEL", OPENAI_MODEL)
+    AI_PRIMARY_TEMPERATURE: float = _get_env_float("AI_PRIMARY_TEMPERATURE", 0.8)
+    AI_PRIMARY_CONTEXT_WINDOW: int = _get_env_int("AI_PRIMARY_CONTEXT_WINDOW", 2000)
+
+    AI_HANDWRITING_MODEL: str = os.getenv("AI_HANDWRITING_MODEL", "gpt-4.1-handwriting")
+    AI_HANDWRITING_TEMPERATURE: float = _get_env_float("AI_HANDWRITING_TEMPERATURE", 0.3)
+    AI_HANDWRITING_CONTEXT_WINDOW: int = _get_env_int("AI_HANDWRITING_CONTEXT_WINDOW", 4000)
+    AI_HANDWRITING_LOW_CONFIDENCE_THRESHOLD: float = _get_env_float(
+        "AI_HANDWRITING_LOW_CONFIDENCE_THRESHOLD", 0.55
+    )
+    AI_HANDWRITING_MAX_WORKERS: int = _get_env_int("AI_HANDWRITING_MAX_WORKERS", 2)
+    AI_HANDWRITING_TIERS: Tuple[str, ...] = tuple(
+        tier.strip().lower()
+        for tier in os.getenv("AI_HANDWRITING_TIERS", "handwriting,guided").split(",")
+        if tier.strip()
+    )
 
     # Database Configuration
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./digitalization.db")
