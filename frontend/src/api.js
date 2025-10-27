@@ -325,12 +325,18 @@ export const fetchLearnedHints = async (templateId, sampleLimit = 50) => {
 export const fetchCorrectionHistory = async ({ documentId, templateFieldId, limit = 50 }) => {
   const params = { limit };
 
-  if (documentId !== undefined) {
-    params.document_id = documentId;
+  const parsedDocumentId =
+    documentId !== undefined && documentId !== null ? Number(documentId) : undefined;
+  if (Number.isFinite(parsedDocumentId)) {
+    params.document_id = parsedDocumentId;
   }
 
-  if (templateFieldId !== undefined) {
-    params.template_field_id = templateFieldId;
+  const parsedTemplateFieldId =
+    templateFieldId !== undefined && templateFieldId !== null
+      ? Number(templateFieldId)
+      : undefined;
+  if (Number.isFinite(parsedTemplateFieldId)) {
+    params.template_field_id = parsedTemplateFieldId;
   }
 
   const response = await api.get('/api/learning/corrections/history', { params });

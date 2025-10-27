@@ -24,6 +24,7 @@ const {
   fetchLearnedHints,
   fetchCorrectionHistory,
 } = require('../../api');
+const { toast } = require('react-toastify');
 
 describe('TemplateLearningView', () => {
   beforeEach(() => {
@@ -96,5 +97,36 @@ describe('TemplateLearningView', () => {
       context: undefined,
       userId: undefined,
     }));
+  });
+
+  it('does not request correction history when the selected field id is not numeric', async () => {
+    getTemplates.mockResolvedValue([
+      { id: 1, name: 'Fatura', version: 3 },
+    ]);
+    getTemplate.mockResolvedValue({
+      id: 1,
+      target_fields: [
+        { id: 'foo', field_name: 'unknown_field', display_name: 'Bilinmeyen Alan' },
+      ],
+    });
+    fetchLearnedHints.mockResolvedValue({ template_id: 1, hints: {} });
+    fetchCorrectionHistory.mockResolvedValue([]);
+
+    render(<TemplateLearningView />);
+
+    await waitFor(() => expect(getTemplates).toHaveBeenCalled());
+
+    fireEvent.change(screen.getByLabelText('Şablon'), { target: { value: '1' } });
+
+    await waitFor(() => expect(getTemplate).toHaveBeenCalledWith(1));
+
+    const fieldSelect = screen.getByLabelText('Şablon Alanı (opsiyonel)');
+    fireEvent.change(fieldSelect, { target: { value: 'foo' } });
+
+    await waitFor(() => {
+      expect(fetchCorrectionHistory).not.toHaveBeenCalled();
+    });
+
+    expect(toast.error).not.toHaveBeenCalled();
   });
 });
