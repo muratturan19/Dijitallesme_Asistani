@@ -12,6 +12,7 @@ function App() {
   const [wizardData, setWizardData] = useState(null);
   const [selectedTemplate, setSelectedTemplate] = useState(null);
   const [dashboardSection, setDashboardSection] = useState('overview');
+  const [learningDefaults, setLearningDefaults] = useState({});
 
   const handleWizardComplete = (data) => {
     setWizardData(data);
@@ -28,6 +29,7 @@ function App() {
     setCurrentView('dashboard');
     setWizardData(null);
     setSelectedTemplate(null);
+    setLearningDefaults({});
   };
 
   const handleNewTemplate = () => {
@@ -56,7 +58,8 @@ function App() {
     setCurrentView('dashboard');
   };
 
-  const handleOpenLearning = () => {
+  const handleOpenLearning = (defaults = {}) => {
+    setLearningDefaults(defaults);
     setCurrentView('learning');
   };
 
@@ -146,11 +149,22 @@ function App() {
           <BatchUpload
             templateId={wizardData?.templateId || selectedTemplate?.id}
             onComplete={handleBatchComplete}
+            onStartCorrection={(payload) =>
+              handleOpenLearning({
+                ...payload,
+                templateId: wizardData?.templateId || selectedTemplate?.id,
+              })
+            }
           />
         )}
 
         {currentView === 'learning' && (
-          <TemplateLearningView onBack={() => handleShowDashboard('overview')} />
+          <TemplateLearningView
+            onBack={() => handleShowDashboard('overview')}
+            initialDocumentId={learningDefaults.documentId}
+            initialFieldId={learningDefaults.fieldId}
+            initialTemplateId={learningDefaults.templateId}
+          />
         )}
       </main>
 

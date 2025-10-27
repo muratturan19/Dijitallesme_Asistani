@@ -129,4 +129,34 @@ describe('TemplateLearningView', () => {
 
     expect(toast.error).not.toHaveBeenCalled();
   });
+
+  it('prefills form data when initial props are provided', async () => {
+    getTemplates.mockResolvedValue([
+      { id: 1, name: 'Fatura', version: 3 },
+    ]);
+    getTemplate.mockResolvedValue({
+      id: 1,
+      target_fields: [
+        { id: 11, field_name: 'total_amount', display_name: 'Toplam Tutar' },
+      ],
+    });
+    fetchLearnedHints.mockResolvedValue({ template_id: 1, hints: {} });
+    fetchCorrectionHistory.mockResolvedValue([]);
+
+    render(
+      <TemplateLearningView
+        initialDocumentId={55}
+        initialFieldId={11}
+        initialTemplateId={1}
+      />
+    );
+
+    await waitFor(() => expect(getTemplates).toHaveBeenCalled());
+    await waitFor(() => expect(getTemplate).toHaveBeenCalledWith(1));
+    await waitFor(() => expect(fetchLearnedHints).toHaveBeenCalledWith(1, 50));
+    await waitFor(() => expect(fetchCorrectionHistory).toHaveBeenCalledWith({ templateFieldId: 11 }));
+
+    expect(screen.getByLabelText('Belge ID')).toHaveValue('55');
+    expect(screen.getByLabelText('Şablon Alanı (opsiyonel)')).toHaveValue('11');
+  });
 });
