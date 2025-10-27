@@ -1,15 +1,22 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 import { getTemplates, deleteTemplate, getBatchJobs } from '../api';
 
-const Dashboard = ({ onNewTemplate, onSelectTemplate }) => {
+const Dashboard = ({ onNewTemplate, onSelectTemplate, onResumeBatch, activeSection = 'overview' }) => {
   const [templates, setTemplates] = useState([]);
   const [batchJobs, setBatchJobs] = useState([]);
   const [loading, setLoading] = useState(true);
+  const pendingSectionRef = useRef(null);
 
   useEffect(() => {
     loadData();
   }, []);
+
+  useEffect(() => {
+    if (activeSection === 'pending' && pendingSectionRef.current) {
+      pendingSectionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [activeSection, batchJobs.length]);
 
   const loadData = async () => {
     setLoading(true);
@@ -40,6 +47,19 @@ const Dashboard = ({ onNewTemplate, onSelectTemplate }) => {
       toast.error('Silme hatası: ' + (error.response?.data?.detail || error.message));
     }
   };
+
+  const templatesById = useMemo(() => {
+    const map = new Map();
+    templates.forEach((template) => {
+      map.set(template.id, template);
+    });
+    return map;
+  }, [templates]);
+
+  const pendingJobs = useMemo(
+    () => batchJobs.filter((job) => job.status !== 'completed'),
+    [batchJobs]
+  );
 
   if (loading) {
     return (
@@ -84,6 +104,79 @@ const Dashboard = ({ onNewTemplate, onSelectTemplate }) => {
             %
           </p>
         </div>
+      </div>
+
+      {/* Pending Jobs */}
+      <div ref={pendingSectionRef} className={`card mb-8 ${activeSection === 'pending' ? 'ring-2 ring-primary-400' : ''}`}>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-2xl font-semibold">Bekleyen Toplu İşler</h2>
+          <button onClick={loadData} className="btn btn-secondary text-sm">Yenile</button>
+        </div>
+
+        {pendingJobs.length === 0 ? (
+          <p className="text-gray-500">Bekleyen toplu iş bulunmuyor. Yeni belgeler eklemek için bir şablon seçin.</p>
+        ) : (
+          <div className="space-y-4">
+            {pendingJobs.map((job) => {
+              const template = templatesById.get(job.template_id);
+              const progress = job.total_files
+                ? Math.min(100, Math.round((job.processed_files / job.total_files) * 100))
+                : 0;
+
+              return (
+                <div
+                  key={job.batch_job_id}
+                  className="border rounded-lg p-4 bg-gray-50 hover:bg-white transition-colors"
+                >
+                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                    <div>
+                      <h3 className="font-semibold text-lg">
+                        {template?.name || `Şablon #${job.template_id}`}
+                      </h3>
+                      <p className="text-sm text-gray-500">
+                        İş #{job.batch_job_id} • {new Date(job.created_at).toLocaleString('tr-TR')}
+                      </p>
+                      <p className="text-sm text-gray-600 mt-1">
+                        {job.processed_files}/{job.total_files} belge işlendi
+                      </p>
+                    </div>
+
+                    <div className="flex-1">
+                      <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
+                        <span>İlerleme</span>
+                        <span>%{progress}</span>
+                      </div>
+                      <div className="w-full bg-gray-200 rounded-full h-2">
+                        <div
+                          className="bg-primary-500 h-2 rounded-full"
+                          style={{ width: `${progress}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col gap-2 min-w-[160px]">
+                      <span
+                        className={`px-2 py-1 text-sm rounded text-center ${
+                          job.status === 'processing'
+                            ? 'bg-blue-100 text-blue-700'
+                            : 'bg-yellow-100 text-yellow-700'
+                        }`}
+                      >
+                        {job.status === 'processing' ? 'İşleniyor' : 'Beklemede'}
+                      </span>
+                      <button
+                        onClick={() => onResumeBatch?.(job.template_id)}
+                        className="btn btn-primary text-sm"
+                      >
+                        Toplu İşe Devam Et
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Templates */}
