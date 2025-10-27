@@ -7,7 +7,7 @@ import json
 import logging
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from app.config import settings
 from app.utils.smart_openai import (
@@ -201,8 +201,13 @@ class HandwritingInterpreter:
         }
 
         base_text = (ocr_result.get("text") or "").strip()
-        snippet = base_text[:1000]
         field_results = ocr_result.get("field_results") or {}
+        low_conf_threshold = float(
+            getattr(settings, "AI_HANDWRITING_LOW_CONFIDENCE_THRESHOLD", 0.55)
+        )
+        document_snippets = self._build_document_snippets(
+            base_text, ocr_result, field_results, low_conf_threshold
+        )
 
         sections: List[str] = []
         sections.append("Belge özeti: " + json.dumps(document_summary, ensure_ascii=False))
@@ -210,17 +215,25 @@ class HandwritingInterpreter:
             sections.append(
                 "Belge metaverisi: " + json.dumps(document_info, ensure_ascii=False)
             )
-        sections.append("Genel OCR metin önizlemesi (ilk 1000 karakter):\n" + snippet)
+        sections.append(
+            "Genel OCR metin önizlemesi:\n"
+            + json.dumps({"segments": document_snippets}, ensure_ascii=False)
+        )
 
         hints = field_hints or {}
 
         for field_name, config in field_configs.items():
             primary_data = primary_mapping.get(field_name, {})
+            field_result = field_results.get(field_name, {})
+            targeted_snippets = self._build_field_snippets(
+                field_result, low_conf_threshold
+            )
             field_context = {
                 "field_config": config,
                 "primary_suggestion": primary_data,
-                "field_ocr": field_results.get(field_name, {}),
+                "field_ocr": field_result,
                 "hint": hints.get(field_name),
+                "targeted_snippets": targeted_snippets,
             }
             sections.append(
                 f"Alan: {field_name}\n" + json.dumps(field_context, ensure_ascii=False)
@@ -346,6 +359,269 @@ class HandwritingInterpreter:
             response_payload["error"] = str(exc)
 
         return response_payload
+
+    @staticmethod
+    def _safe_float(value: Any) -> Optional[float]:
+        """Safely convert values to float when possible."""
+
+        try:
+            return float(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _normalize_bbox(payload: Any) -> Optional[Dict[str, float]]:
+        """Normalize bounding box/ROI payloads into x, y, w, h form."""
+
+        if not isinstance(payload, dict):
+            return None
+
+        candidate: Any = None
+        for key in ("bounding_box", "bbox", "box", "region", "roi"):
+            if payload.get(key) is not None:
+                candidate = payload.get(key)
+                break
+
+        if candidate is None:
+            return None
+
+        def _from_dict(data: Dict[str, Any]) -> Optional[Dict[str, float]]:
+            x = HandwritingInterpreter._safe_float(
+                data.get("x", data.get("left"))
+            )
+            y = HandwritingInterpreter._safe_float(
+                data.get("y", data.get("top"))
+            )
+            w = HandwritingInterpreter._safe_float(
+                data.get("w", data.get("width"))
+            )
+            h = HandwritingInterpreter._safe_float(
+                data.get("h", data.get("height"))
+            )
+            right = HandwritingInterpreter._safe_float(data.get("right"))
+            bottom = HandwritingInterpreter._safe_float(data.get("bottom"))
+
+            if w is None and right is not None and x is not None:
+                w = right - x
+            if h is None and bottom is not None and y is not None:
+                h = bottom - y
+
+            if x is None or y is None or w is None or h is None:
+                return None
+
+            return {"x": x, "y": y, "w": w, "h": h}
+
+        if isinstance(candidate, dict):
+            normalized = _from_dict(candidate)
+            if normalized:
+                return normalized
+
+        if isinstance(candidate, (list, tuple)) and len(candidate) >= 4:
+            values = [HandwritingInterpreter._safe_float(v) for v in candidate[:4]]
+            if any(v is None for v in values):
+                return None
+            x, y, third, fourth = values  # type: ignore[assignment]
+            if third is None or fourth is None or x is None or y is None:
+                return None
+
+            # Detect whether we received right/bottom or width/height
+            if third > x and fourth > y:
+                w = third - x
+                h = fourth - y
+            else:
+                w = third
+                h = fourth
+
+            return {"x": x, "y": y, "w": w, "h": h}
+
+        return None
+
+    @staticmethod
+    def _extract_page_number(
+        payload: Any, *, default: Optional[int] = None
+    ) -> Optional[int]:
+        """Extract a 1-based page number from various payload formats."""
+
+        if not isinstance(payload, dict):
+            return default
+
+        for key in ("page_number", "page", "page_no", "page_index", "pageId"):
+            value = payload.get(key)
+            if value in (None, ""):
+                continue
+            try:
+                page_value = int(value)
+            except (TypeError, ValueError):
+                continue
+
+            if key == "page_index" and page_value >= 0:
+                return page_value + 1
+            return page_value
+
+        return default
+
+    @classmethod
+    def _build_field_snippets(
+        cls, field_result: Any, low_conf_threshold: float
+    ) -> List[Dict[str, Any]]:
+        """Create focused snippets for a single field using ROI and line confidences."""
+
+        if not isinstance(field_result, dict):
+            return []
+
+        snippets: List[Dict[str, Any]] = []
+        text = (field_result.get("text") or "").strip()
+        page_number = cls._extract_page_number(field_result)
+        bbox = cls._normalize_bbox(field_result)
+
+        if text:
+            snippet_payload: Dict[str, Any] = {
+                "label": "Alan OCR metni",
+                "text": text[:500],
+            }
+            if page_number is not None:
+                snippet_payload["page"] = page_number
+            if bbox:
+                snippet_payload["bounding_box"] = bbox
+            snippets.append(snippet_payload)
+
+        line_candidates = (
+            field_result.get("lines")
+            or field_result.get("line_items")
+            or field_result.get("line_data")
+        )
+        if isinstance(line_candidates, list):
+            for line in line_candidates:
+                if not isinstance(line, dict):
+                    continue
+                line_text = (line.get("text") or "").strip()
+                if not line_text:
+                    continue
+                confidence = cls._safe_float(line.get("confidence"))
+                if confidence is None or confidence >= low_conf_threshold:
+                    continue
+
+                snippet_payload = {
+                    "label": "Düşük güvenli satır",
+                    "text": line_text[:500],
+                    "confidence": confidence,
+                }
+                line_page = cls._extract_page_number(line, default=page_number)
+                if line_page is not None:
+                    snippet_payload["page"] = line_page
+                line_bbox = cls._normalize_bbox(line)
+                if line_bbox:
+                    snippet_payload["bounding_box"] = line_bbox
+                snippets.append(snippet_payload)
+
+        return snippets
+
+    @classmethod
+    def _build_document_snippets(
+        cls,
+        base_text: str,
+        ocr_result: Dict[str, Any],
+        field_results: Dict[str, Any],
+        low_conf_threshold: float,
+    ) -> List[Dict[str, Any]]:
+        """Aggregate document-level snippets prioritizing ROI crops and low-confidence lines."""
+
+        segments: List[Dict[str, Any]] = []
+        target_pages: Set[int] = set()
+
+        for field_name, field_result in (field_results or {}).items():
+            if not isinstance(field_result, dict):
+                continue
+            field_snippets = cls._build_field_snippets(field_result, low_conf_threshold)
+            for snippet in field_snippets:
+                snippet_copy = dict(snippet)
+                snippet_copy["field"] = field_name
+                segments.append(snippet_copy)
+                page_value = snippet_copy.get("page")
+                if isinstance(page_value, int):
+                    target_pages.add(page_value)
+
+            page_number = cls._extract_page_number(field_result)
+            if page_number is not None:
+                target_pages.add(page_number)
+
+        low_conf_entries = ocr_result.get("low_confidence_lines")
+        if isinstance(low_conf_entries, list):
+            for entry in low_conf_entries:
+                if not isinstance(entry, dict):
+                    continue
+                entry_text = (entry.get("text") or "").strip()
+                if not entry_text:
+                    continue
+                snippet = {
+                    "label": "Düşük güvenli satır",
+                    "text": entry_text[:500],
+                }
+                confidence = cls._safe_float(entry.get("confidence"))
+                if confidence is not None:
+                    snippet["confidence"] = confidence
+                page_number = cls._extract_page_number(entry)
+                if page_number is not None:
+                    snippet["page"] = page_number
+                    target_pages.add(page_number)
+                bbox = cls._normalize_bbox(entry)
+                if bbox:
+                    snippet["bounding_box"] = bbox
+                segments.append(snippet)
+
+        pages = ocr_result.get("pages")
+        if isinstance(pages, list):
+            for index, page in enumerate(pages):
+                if not isinstance(page, dict):
+                    continue
+                page_number = cls._extract_page_number(page, default=index + 1)
+                include_page = not target_pages or (
+                    page_number is not None and page_number in target_pages
+                )
+
+                if not include_page and isinstance(page.get("lines"), list):
+                    for line in page["lines"]:
+                        if not isinstance(line, dict):
+                            continue
+                        confidence = cls._safe_float(line.get("confidence"))
+                        if confidence is not None and confidence < low_conf_threshold:
+                            include_page = True
+                            break
+
+                if not include_page:
+                    continue
+
+                page_text = (page.get("text") or "").strip()
+                if not page_text and isinstance(page.get("lines"), list):
+                    texts: List[str] = []
+                    for line in page["lines"]:
+                        if not isinstance(line, dict):
+                            continue
+                        line_text = (line.get("text") or "").strip()
+                        if line_text:
+                            texts.append(line_text)
+                    page_text = " ".join(texts).strip()
+
+                if not page_text:
+                    continue
+
+                segment = {
+                    "label": f"Sayfa {page_number} özeti",
+                    "text": page_text[:1000],
+                }
+                if page_number is not None:
+                    segment["page"] = page_number
+                segments.append(segment)
+
+        if not segments and base_text:
+            segments.append(
+                {
+                    "label": "Belge başlangıcı",
+                    "text": base_text[:1000],
+                }
+            )
+
+        return segments
 
     @staticmethod
     def _parse_openai_response(response: Any) -> Dict[str, Any]:
