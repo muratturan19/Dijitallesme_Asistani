@@ -208,6 +208,49 @@ class TemplateManager:
             logger.warning("OCR ROI değeri serileştirilemedi, metne çevriliyor: %s", value)
             return str(value)
 
+    @staticmethod
+    def _normalize_processing_mode(value: Any) -> str:
+        if value in (None, "", "null", "None"):
+            return "auto"
+
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            return normalized or "auto"
+
+        return str(value).strip().lower() or "auto"
+
+    @staticmethod
+    def _normalize_llm_tier(value: Any) -> str:
+        if value in (None, "", "null", "None"):
+            return "standard"
+
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            return normalized or "standard"
+
+        return str(value).strip().lower() or "standard"
+
+    @staticmethod
+    def _normalize_handwriting_threshold(value: Any) -> Optional[float]:
+        if value in (None, "", "null", "None"):
+            return None
+
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            logger.warning(
+                "El yazısı eşiği değeri sayı olarak parse edilemedi: %s",
+                value,
+            )
+            return None
+
+        if numeric < 0:
+            numeric = 0.0
+        if numeric > 1:
+            numeric = 1.0
+
+        return numeric
+
     def _normalize_field(self, field_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if not isinstance(field_data, dict):
             return None
@@ -228,6 +271,19 @@ class TemplateManager:
         normalized['regex_hint'] = normalized.get('regex_hint') or None
         normalized['ocr_psm'] = self._normalize_ocr_psm(normalized.get('ocr_psm'))
         normalized['ocr_roi'] = self._normalize_ocr_roi(normalized.get('ocr_roi'))
+        normalized['processing_mode'] = self._normalize_processing_mode(
+            normalized.get('processing_mode')
+        )
+        normalized['llm_tier'] = self._normalize_llm_tier(
+            normalized.get('llm_tier')
+        )
+        normalized['handwriting_threshold'] = self._normalize_handwriting_threshold(
+            normalized.get('handwriting_threshold')
+        )
+        normalized['auto_detected_handwriting'] = self._to_bool(
+            normalized.get('auto_detected_handwriting'),
+            False,
+        )
 
         return normalized
 
@@ -288,7 +344,11 @@ class TemplateManager:
                     regex_hint=field_data.get('regex_hint'),
                     ocr_psm=field_data.get('ocr_psm'),
                     ocr_roi=field_data.get('ocr_roi'),
-                    enabled=field_data.get('enabled', True)
+                    enabled=field_data.get('enabled', True),
+                    processing_mode=field_data.get('processing_mode', 'auto'),
+                    llm_tier=field_data.get('llm_tier', 'standard'),
+                    handwriting_threshold=field_data.get('handwriting_threshold'),
+                    auto_detected_handwriting=field_data.get('auto_detected_handwriting', False),
                 )
                 self.db.add(template_field)
 
@@ -382,7 +442,11 @@ class TemplateManager:
                             regex_hint=field_data.get('regex_hint'),
                             ocr_psm=field_data.get('ocr_psm'),
                             ocr_roi=field_data.get('ocr_roi'),
-                            enabled=field_data.get('enabled', True)
+                            enabled=field_data.get('enabled', True),
+                            processing_mode=field_data.get('processing_mode', 'auto'),
+                            llm_tier=field_data.get('llm_tier', 'standard'),
+                            handwriting_threshold=field_data.get('handwriting_threshold'),
+                            auto_detected_handwriting=field_data.get('auto_detected_handwriting', False),
                         )
                         self.db.add(template_field)
 

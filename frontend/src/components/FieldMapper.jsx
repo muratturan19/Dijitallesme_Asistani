@@ -8,31 +8,45 @@ const FieldMapper = ({ data, onNext, onBack }) => {
   const [loading, setLoading] = useState(false);
   const analysisError = data.analysisResult?.error;
   const overallConfidence = data.analysisResult?.overall_confidence || 0;
+  const normalizeFieldConfig = (field) => ({
+    ...field,
+    enabled: field?.enabled !== false,
+    processing_mode: field?.processing_mode ? String(field.processing_mode).trim().toLowerCase() : 'auto',
+    llm_tier: field?.llm_tier ? String(field.llm_tier).trim().toLowerCase() : 'standard',
+    handwriting_threshold: (() => {
+      if (
+        field?.handwriting_threshold === undefined ||
+        field?.handwriting_threshold === null ||
+        field?.handwriting_threshold === ''
+      ) {
+        return null;
+      }
+
+      const numeric = Number(field.handwriting_threshold);
+      return Number.isFinite(numeric) ? Math.min(1, Math.max(0, numeric)) : null;
+    })(),
+    auto_detected_handwriting: field?.auto_detected_handwriting === undefined ? false : Boolean(field.auto_detected_handwriting),
+  });
+
   const [fieldConfigs, setFieldConfigs] = useState(() => {
     if (Array.isArray(data.templateFields) && data.templateFields.length > 0) {
-      return data.templateFields.map(field => ({
-        ...field,
-        enabled: field.enabled !== false,
-      }));
+      return data.templateFields.map((field) => normalizeFieldConfig(field));
     }
 
-    return Object.keys(data.analysisResult?.suggested_mapping || {}).map(fieldName => ({
-      field_name: fieldName,
-      data_type: 'text',
-      required: false,
-      regex_hint: '',
-      enabled: true,
-    }));
+    return Object.keys(data.analysisResult?.suggested_mapping || {}).map((fieldName) =>
+      normalizeFieldConfig({
+        field_name: fieldName,
+        data_type: 'text',
+        required: false,
+        regex_hint: '',
+        enabled: true,
+      })
+    );
   });
 
   useEffect(() => {
     if (Array.isArray(data.templateFields) && data.templateFields.length > 0) {
-      setFieldConfigs(
-        data.templateFields.map(field => ({
-          ...field,
-          enabled: field.enabled !== false,
-        }))
-      );
+      setFieldConfigs(data.templateFields.map((field) => normalizeFieldConfig(field)));
     }
   }, [data.templateFields]);
 
@@ -138,6 +152,31 @@ const FieldMapper = ({ data, onNext, onBack }) => {
   );
 
   const handleFieldConfigChange = (fieldName, key, value) => {
+    let normalizedValue = value;
+
+    if (key === 'processing_mode') {
+      normalizedValue = value ? String(value).trim().toLowerCase() : 'auto';
+    }
+
+    if (key === 'llm_tier') {
+      normalizedValue = value ? String(value).trim().toLowerCase() : 'standard';
+    }
+
+    if (key === 'handwriting_threshold') {
+      if (value === '' || value === null || value === undefined) {
+        normalizedValue = null;
+      } else {
+        const numeric = Number(value);
+        normalizedValue = Number.isFinite(numeric)
+          ? Math.min(1, Math.max(0, numeric))
+          : null;
+      }
+    }
+
+    if (key === 'auto_detected_handwriting') {
+      normalizedValue = Boolean(value);
+    }
+
     setFieldConfigs(prev => {
       const exists = prev.some(field => field.field_name === fieldName);
 
@@ -150,6 +189,10 @@ const FieldMapper = ({ data, onNext, onBack }) => {
             required: key === 'required' ? value : false,
             regex_hint: key === 'regex_hint' ? value : '',
             enabled: key === 'enabled' ? value : true,
+            processing_mode: key === 'processing_mode' ? normalizedValue : 'auto',
+            llm_tier: key === 'llm_tier' ? normalizedValue : 'standard',
+            handwriting_threshold: key === 'handwriting_threshold' ? normalizedValue : null,
+            auto_detected_handwriting: key === 'auto_detected_handwriting' ? normalizedValue : false,
           },
         ];
       }
@@ -158,7 +201,7 @@ const FieldMapper = ({ data, onNext, onBack }) => {
         field.field_name === fieldName
           ? {
               ...field,
-              [key]: value,
+              [key]: normalizedValue,
             }
           : field
       );
@@ -182,6 +225,10 @@ const FieldMapper = ({ data, onNext, onBack }) => {
         required: false,
         regex_hint: '',
         enabled: true,
+        processing_mode: 'auto',
+        llm_tier: 'standard',
+        handwriting_threshold: null,
+        auto_detected_handwriting: false,
       }));
 
       return [...prev, ...newEntries];
@@ -306,6 +353,64 @@ const FieldMapper = ({ data, onNext, onBack }) => {
                                 }
                               />
                               <span>Gerekli</span>
+                            </label>
+                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                              <label className="block text-xs text-gray-500 mb-1">İşleme Modu</label>
+                              <input
+                                type="text"
+                                className="border rounded px-2 py-1 text-sm w-full"
+                                value={fieldConfig.processing_mode || 'auto'}
+                                onChange={(e) =>
+                                  handleFieldConfigChange(fieldName, 'processing_mode', e.target.value)
+                                }
+                                placeholder="örn: auto, ocr, llm"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs text-gray-500 mb-1">LLM Katmanı</label>
+                              <input
+                                type="text"
+                                className="border rounded px-2 py-1 text-sm w-full"
+                                value={fieldConfig.llm_tier || 'standard'}
+                                onChange={(e) =>
+                                  handleFieldConfigChange(fieldName, 'llm_tier', e.target.value)
+                                }
+                                placeholder="örn: standard, premium"
+                              />
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                              <label className="block text-xs text-gray-500 mb-1">El Yazısı Eşiği (0-1)</label>
+                              <input
+                                type="number"
+                                min="0"
+                                max="1"
+                                step="0.01"
+                                className="border rounded px-2 py-1 text-sm w-full"
+                                value={fieldConfig.handwriting_threshold ?? ''}
+                                onChange={(e) =>
+                                  handleFieldConfigChange(fieldName, 'handwriting_threshold', e.target.value)
+                                }
+                                placeholder="örn: 0.65"
+                              />
+                            </div>
+                            <label className="flex items-center gap-2 text-sm">
+                              <input
+                                type="checkbox"
+                                className="rounded"
+                                checked={fieldConfig.auto_detected_handwriting || false}
+                                onChange={(e) =>
+                                  handleFieldConfigChange(
+                                    fieldName,
+                                    'auto_detected_handwriting',
+                                    e.target.checked
+                                  )
+                                }
+                              />
+                              <span>Otomatik El Yazısı Algılandı</span>
                             </label>
                           </div>
                           <div>

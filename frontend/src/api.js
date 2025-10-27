@@ -44,6 +44,72 @@ const normalizeOcrRoi = (value) => {
   return value;
 };
 
+const normalizeProcessingMode = (value) => {
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    return normalized || 'auto';
+  }
+
+  if (value === undefined || value === null) {
+    return 'auto';
+  }
+
+  return String(value).trim().toLowerCase() || 'auto';
+};
+
+const normalizeLlmTier = (value) => {
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    return normalized || 'standard';
+  }
+
+  if (value === undefined || value === null) {
+    return 'standard';
+  }
+
+  return String(value).trim().toLowerCase() || 'standard';
+};
+
+const normalizeHandwritingThreshold = (value) => {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+
+  const numeric = Number(value);
+
+  if (!Number.isFinite(numeric)) {
+    return null;
+  }
+
+  if (numeric < 0) {
+    return 0;
+  }
+
+  if (numeric > 1) {
+    return 1;
+  }
+
+  return Number(numeric.toFixed(3));
+};
+
+const normalizeAutoDetectedHandwriting = (value) => {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (['true', '1', 'yes', 'on'].includes(normalized)) {
+      return true;
+    }
+    if (['false', '0', 'no', 'off'].includes(normalized)) {
+      return false;
+    }
+  }
+
+  return Boolean(value);
+};
+
 const prepareTargetFields = (fields) => {
   if (!Array.isArray(fields)) {
     return fields;
@@ -58,6 +124,10 @@ const prepareTargetFields = (fields) => {
       ...field,
       ocr_psm: normalizeOcrPsm(field.ocr_psm),
       ocr_roi: normalizeOcrRoi(field.ocr_roi),
+      processing_mode: normalizeProcessingMode(field.processing_mode),
+      llm_tier: normalizeLlmTier(field.llm_tier),
+      handwriting_threshold: normalizeHandwritingThreshold(field.handwriting_threshold),
+      auto_detected_handwriting: normalizeAutoDetectedHandwriting(field.auto_detected_handwriting),
     };
   });
 };

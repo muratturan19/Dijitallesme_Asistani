@@ -22,13 +22,58 @@ const WelcomeWizard = ({ onComplete }) => {
   const hasEnabledFields = templateFields.some(field => field.enabled !== false);
   const allFieldsSelected = templateFields.length > 0 && templateFields.every(field => field.enabled !== false);
 
+  const normalizeFieldDefaults = (field) => ({
+    ...field,
+    enabled: field?.enabled !== false,
+    processing_mode: field?.processing_mode ? String(field.processing_mode).trim().toLowerCase() : 'auto',
+    llm_tier: field?.llm_tier ? String(field.llm_tier).trim().toLowerCase() : 'standard',
+    handwriting_threshold: (() => {
+      if (
+        field?.handwriting_threshold === undefined ||
+        field?.handwriting_threshold === null ||
+        field?.handwriting_threshold === ''
+      ) {
+        return null;
+      }
+
+      const numeric = Number(field.handwriting_threshold);
+      return Number.isFinite(numeric) ? Math.min(1, Math.max(0, numeric)) : null;
+    })(),
+    auto_detected_handwriting: field?.auto_detected_handwriting === undefined
+      ? false
+      : Boolean(field.auto_detected_handwriting),
+  });
+
   const updateTemplateField = (index, updates) => {
+    const processed = { ...updates };
+
+    if (Object.prototype.hasOwnProperty.call(processed, 'processing_mode')) {
+      const raw = processed.processing_mode;
+      processed.processing_mode = raw ? String(raw).trim().toLowerCase() : 'auto';
+    }
+
+    if (Object.prototype.hasOwnProperty.call(processed, 'llm_tier')) {
+      const raw = processed.llm_tier;
+      processed.llm_tier = raw ? String(raw).trim().toLowerCase() : 'standard';
+    }
+
+    if (Object.prototype.hasOwnProperty.call(processed, 'handwriting_threshold')) {
+      const raw = processed.handwriting_threshold;
+      processed.handwriting_threshold = raw === '' || raw === null || raw === undefined
+        ? null
+        : Math.min(1, Math.max(0, Number(raw) || 0));
+    }
+
+    if (Object.prototype.hasOwnProperty.call(processed, 'auto_detected_handwriting')) {
+      processed.auto_detected_handwriting = Boolean(processed.auto_detected_handwriting);
+    }
+
     setTemplateFields(prev =>
       prev.map((field, idx) =>
         idx === index
           ? {
               ...field,
-              ...updates,
+              ...processed,
             }
           : field
       )
@@ -85,10 +130,7 @@ const WelcomeWizard = ({ onComplete }) => {
 
     try {
       const result = await uploadTemplateFile(file);
-      const normalizedFields = result.fields.map(field => ({
-        ...field,
-        enabled: field.enabled !== false,
-      }));
+      const normalizedFields = result.fields.map(field => normalizeFieldDefaults(field));
 
       setTemplateFields(normalizedFields);
 
@@ -337,6 +379,18 @@ const WelcomeWizard = ({ onComplete }) => {
                         Gerekli
                       </th>
                       <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        İşleme Modu
+                      </th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        LLM Katmanı
+                      </th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        El Yazısı Eşiği
+                      </th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        Otomatik El Yazısı
+                      </th>
+                      <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                         Regex İpucu
                       </th>
                     </tr>
@@ -377,6 +431,52 @@ const WelcomeWizard = ({ onComplete }) => {
                             checked={field.required || false}
                             onChange={(e) =>
                               updateTemplateField(index, { required: e.target.checked })
+                            }
+                          />
+                        </td>
+                        <td className="px-4 py-2 align-middle">
+                          <input
+                            type="text"
+                            className="border rounded px-2 py-1 w-full"
+                            value={field.processing_mode || 'auto'}
+                            onChange={(e) =>
+                              updateTemplateField(index, { processing_mode: e.target.value })
+                            }
+                            placeholder="örn: auto"
+                          />
+                        </td>
+                        <td className="px-4 py-2 align-middle">
+                          <input
+                            type="text"
+                            className="border rounded px-2 py-1 w-full"
+                            value={field.llm_tier || 'standard'}
+                            onChange={(e) =>
+                              updateTemplateField(index, { llm_tier: e.target.value })
+                            }
+                            placeholder="örn: standard"
+                          />
+                        </td>
+                        <td className="px-4 py-2 align-middle">
+                          <input
+                            type="number"
+                            min="0"
+                            max="1"
+                            step="0.01"
+                            className="border rounded px-2 py-1 w-full"
+                            value={field.handwriting_threshold ?? ''}
+                            onChange={(e) =>
+                              updateTemplateField(index, { handwriting_threshold: e.target.value })
+                            }
+                            placeholder="örn: 0.65"
+                          />
+                        </td>
+                        <td className="px-4 py-2 align-middle">
+                          <input
+                            type="checkbox"
+                            className="rounded"
+                            checked={field.auto_detected_handwriting || false}
+                            onChange={(e) =>
+                              updateTemplateField(index, { auto_detected_handwriting: e.target.checked })
                             }
                           />
                         </td>
