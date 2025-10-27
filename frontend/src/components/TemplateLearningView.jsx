@@ -97,10 +97,16 @@ const TemplateLearningView = ({ onBack }) => {
       return;
     }
 
+    const parsedFieldId = Number(selectedFieldId);
+    if (!Number.isFinite(parsedFieldId)) {
+      setHistory([]);
+      return;
+    }
+
     const loadHistory = async () => {
       setLoadingHistory(true);
       try {
-        const data = await fetchCorrectionHistory({ templateFieldId: Number(selectedFieldId) });
+        const data = await fetchCorrectionHistory({ templateFieldId: parsedFieldId });
         setHistory(Array.isArray(data) ? data : []);
       } catch (error) {
         toast.error('Düzeltme geçmişi getirilemedi: ' + (error.response?.data?.detail || error.message));
@@ -161,9 +167,14 @@ const TemplateLearningView = ({ onBack }) => {
 
     setSubmitting(true);
     try {
+      const parsedTemplateFieldId = Number(formState.templateFieldId);
+      const templateFieldIdValue = Number.isFinite(parsedTemplateFieldId)
+        ? parsedTemplateFieldId
+        : undefined;
+
       await submitLearningCorrection({
         documentId: Number(formState.documentId),
-        templateFieldId: formState.templateFieldId ? Number(formState.templateFieldId) : undefined,
+        templateFieldId: templateFieldIdValue,
         originalValue: formState.originalValue || undefined,
         correctedValue: formState.correctedValue,
         context: contextPayload,
@@ -172,17 +183,15 @@ const TemplateLearningView = ({ onBack }) => {
       toast.success('Düzeltme kaydedildi.');
       setFormState((prev) => ({
         ...initialFormState,
-        templateFieldId: prev.templateFieldId,
+        templateFieldId: templateFieldIdValue !== undefined ? String(templateFieldIdValue) : '',
       }));
-      if (formState.templateFieldId) {
-        setSelectedFieldId(formState.templateFieldId);
-      }
+      setSelectedFieldId(templateFieldIdValue !== undefined ? String(templateFieldIdValue) : '');
       await Promise.all([
         fetchLearnedHints(Number(selectedTemplateId), sampleLimit).then((response) => {
           setHints(response?.hints || {});
         }),
-        formState.templateFieldId
-          ? fetchCorrectionHistory({ templateFieldId: Number(formState.templateFieldId) }).then((data) => {
+        templateFieldIdValue !== undefined
+          ? fetchCorrectionHistory({ templateFieldId: templateFieldIdValue }).then((data) => {
               setHistory(Array.isArray(data) ? data : []);
             })
           : Promise.resolve(),
