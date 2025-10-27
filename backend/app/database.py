@@ -1,14 +1,15 @@
 # -*- coding: utf-8 -*-
 from sqlalchemy import (
-    create_engine,
-    Column,
-    Integer,
-    String,
     Boolean,
+    Column,
     DateTime,
     ForeignKey,
+    Integer,
     JSON,
+    String,
     Text,
+    UniqueConstraint,
+    create_engine,
     text,
 )
 from sqlalchemy.ext.declarative import declarative_base
@@ -66,9 +67,42 @@ class TemplateField(Base):
     ocr_psm = Column(Integer, nullable=True)
     ocr_roi = Column(Text, nullable=True)
     enabled = Column(Boolean, default=True, nullable=True, server_default=text("1"))
+    auto_learned_type = Column(String(50), nullable=True)
+    learning_enabled = Column(Boolean, default=True, nullable=False, server_default=text("1"))
+    last_learned_at = Column(DateTime, nullable=True)
 
     # Relationships
     template = relationship("Template", back_populates="fields")
+    hints = relationship(
+        "TemplateFieldHint",
+        back_populates="template_field",
+        cascade="all, delete-orphan",
+    )
+    correction_feedback = relationship("CorrectionFeedback", back_populates="template_field")
+
+
+class TemplateFieldHint(Base):
+    __tablename__ = "template_field_hints"
+    __table_args__ = (
+        UniqueConstraint(
+            "template_field_id",
+            "hint_type",
+            name="uq_template_field_hints_field_type",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    template_field_id = Column(
+        Integer,
+        ForeignKey("template_fields.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    hint_type = Column(String(100), nullable=False)
+    hint_payload = Column(JSON, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    created_by = Column(Integer, nullable=True)
+
+    template_field = relationship("TemplateField", back_populates="hints")
 
 
 class BatchJob(Base):
@@ -102,6 +136,38 @@ class Document(Base):
     batch_job = relationship("BatchJob", back_populates="documents")
     template = relationship("Template", back_populates="documents")
     extracted_data = relationship("ExtractedData", back_populates="document", cascade="all, delete-orphan")
+    correction_feedback = relationship(
+        "CorrectionFeedback",
+        back_populates="document",
+        cascade="all, delete-orphan",
+    )
+
+
+class CorrectionFeedback(Base):
+    __tablename__ = "correction_feedback"
+    __table_args__ = (
+        UniqueConstraint(
+            "document_id",
+            "template_field_id",
+            "corrected_value",
+            name="uq_correction_feedback_document_field_value",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    document_id = Column(Integer, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False)
+    template_field_id = Column(Integer, ForeignKey("template_fields.id", ondelete="SET NULL"), nullable=True)
+    original_value = Column(Text, nullable=True)
+    corrected_value = Column(Text, nullable=False)
+    feedback_context = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    applied_at = Column(DateTime, nullable=True)
+    created_by = Column(Integer, nullable=True)
+    applied_by = Column(Integer, nullable=True)
+    applied = Column(Boolean, default=False, nullable=False, server_default=text("0"))
+
+    document = relationship("Document", back_populates="correction_feedback")
+    template_field = relationship("TemplateField", back_populates="correction_feedback")
 
 
 class ExtractedData(Base):
@@ -157,6 +223,24 @@ def init_db():
                 "template_fields",
                 "enabled",
                 "enabled BOOLEAN NULL DEFAULT 1",
+            )
+            _ensure_column(
+                conn,
+                "template_fields",
+                "auto_learned_type",
+                "auto_learned_type VARCHAR(50) NULL",
+            )
+            _ensure_column(
+                conn,
+                "template_fields",
+                "learning_enabled",
+                "learning_enabled BOOLEAN NOT NULL DEFAULT 1",
+            )
+            _ensure_column(
+                conn,
+                "template_fields",
+                "last_learned_at",
+                "last_learned_at DATETIME NULL",
             )
 
 
