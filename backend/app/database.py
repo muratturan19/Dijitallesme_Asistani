@@ -16,6 +16,7 @@ from sqlalchemy import (
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
+import logging
 import os
 
 # Database URL
@@ -189,64 +190,29 @@ class ExtractedData(Base):
     document = relationship("Document", back_populates="extracted_data")
 
 
-# Create all tables
-def _ensure_column(conn, table: str, column: str, ddl: str) -> None:
-    """Ensure the given column exists in the SQLite table."""
-
-    result = conn.execute(text(f"PRAGMA table_info({table});"))
-    columns = {row[1] for row in result}
-
-    if column not in columns:
-        conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {ddl};"))
-
-
 def init_db():
-    Base.metadata.create_all(bind=engine)
+    logger = logging.getLogger(__name__)
 
-    if engine.dialect.name == "sqlite":
-        with engine.begin() as conn:
-            _ensure_column(
-                conn,
-                "template_fields",
-                "regex_hint",
-                "regex_hint VARCHAR(500) NULL",
-            )
-            _ensure_column(
-                conn,
-                "template_fields",
-                "ocr_psm",
-                "ocr_psm INTEGER NULL",
-            )
-            _ensure_column(
-                conn,
-                "template_fields",
-                "ocr_roi",
-                "ocr_roi TEXT NULL",
-            )
-            _ensure_column(
-                conn,
-                "template_fields",
-                "enabled",
-                "enabled BOOLEAN NULL DEFAULT 1",
-            )
-            _ensure_column(
-                conn,
-                "template_fields",
-                "auto_learned_type",
-                "auto_learned_type VARCHAR(50) NULL",
-            )
-            _ensure_column(
-                conn,
-                "template_fields",
-                "learning_enabled",
-                "learning_enabled BOOLEAN NOT NULL DEFAULT 1",
-            )
-            _ensure_column(
-                conn,
-                "template_fields",
-                "last_learned_at",
-                "last_learned_at DATETIME NULL",
-            )
+    if engine.dialect.name != "sqlite":
+        return True
+
+    database_path = engine.url.database
+
+    if not database_path or database_path == ":memory:":
+        return True
+
+    # Normalize path to provide accurate feedback to the operator
+    normalized_path = os.path.abspath(database_path)
+
+    if os.path.exists(normalized_path):
+        return True
+
+    logger.warning(
+        "Veritabanı dosyası bulunamadı (%s). Lütfen `alembic upgrade head` komutunu çalıştırın.",
+        normalized_path,
+    )
+
+    return False
 
 
 # Dependency to get DB session

@@ -100,8 +100,12 @@ async def startup_event():
     configure_tesseract()
 
     # Initialize database
-    init_db()
-    logger.info("Veritabanı hazır")
+    if init_db():
+        logger.info("Veritabanı hazır")
+    else:
+        logger.warning(
+            "Veritabanı dosyası bulunamadı. Uygulama çalışmaya devam ediyor ancak lütfen `alembic upgrade head` komutunu çalıştırın."
+        )
 
     # Create directories
     settings.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
