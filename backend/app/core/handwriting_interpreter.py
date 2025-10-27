@@ -278,23 +278,30 @@ class HandwritingInterpreter:
             "prompt": prompt,
         }
 
+        is_reasoning_model = str(self.model or "").startswith("gpt-5")
+        temperature = None if is_reasoning_model else self.temperature
+
         try:
             if self._client is not None:  # pragma: no cover - requires modern SDK
-                response = self._client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    temperature=self.temperature,
-                    max_completion_tokens=self.context_window,
-                    response_format={"type": "json_object"},
-                )
+                request_kwargs = {
+                    "model": self.model,
+                    "messages": messages,
+                    "max_completion_tokens": self.context_window,
+                    "response_format": {"type": "json_object"},
+                }
+                if temperature is not None:
+                    request_kwargs["temperature"] = temperature
+                response = self._client.chat.completions.create(**request_kwargs)
                 response_payload.update(self._parse_openai_response(response))
             elif openai is not None:  # pragma: no cover - legacy SDK
-                response = openai.ChatCompletion.create(
-                    model=self.model,
-                    messages=messages,
-                    temperature=self.temperature,
-                    max_tokens=self.context_window,
-                )
+                request_kwargs = {
+                    "model": self.model,
+                    "messages": messages,
+                    "max_tokens": self.context_window,
+                }
+                if temperature is not None:
+                    request_kwargs["temperature"] = temperature
+                response = openai.ChatCompletion.create(**request_kwargs)
                 response_payload.update(self._parse_openai_response(response))
             else:
                 response_payload["error"] = "OpenAI client is not available."
