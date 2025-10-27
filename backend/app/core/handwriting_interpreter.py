@@ -158,6 +158,7 @@ class HandwritingInterpreter:
         temperature: Optional[float] = None,
         context_window: Optional[int] = None,
         reasoning_extra_kwargs: Optional[Dict[str, Any]] = None,
+        reasoning_effort: Optional[str] = None,
         apply_reasoning_temperature: bool = True,
     ) -> None:
         self.api_key = api_key
@@ -169,6 +170,11 @@ class HandwritingInterpreter:
             settings.AI_HANDWRITING_CONTEXT_WINDOW
             if context_window is None
             else context_window
+        )
+        self.reasoning_effort = (
+            settings.AI_HANDWRITING_REASONING_EFFORT
+            if reasoning_effort is None
+            else reasoning_effort
         )
         base_extra_kwargs: Dict[str, Any] = dict(reasoning_extra_kwargs or {})
         top_p_value = self._temperature_to_top_p(
@@ -332,6 +338,7 @@ class HandwritingInterpreter:
                         messages=messages,
                         response_format={"type": "json_object"},
                         temperature=temperature,
+                        reasoning_effort=self.reasoning_effort,
                         extra_kwargs=extra_kwargs_param,
                     )
                 else:
@@ -423,6 +430,9 @@ class HandwritingInterpreter:
             or ("responses" if is_reasoning_model else "chat.completions"),
             "is_reasoning_model": is_reasoning_model,
         }
+
+        if is_reasoning_model:
+            metadata["reasoning_effort"] = self.reasoning_effort
 
         if reasoning_parameters:
             metadata["reasoning_parameters"] = dict(reasoning_parameters)

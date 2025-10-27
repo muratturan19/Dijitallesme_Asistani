@@ -40,13 +40,14 @@ class Settings:
 
     # OpenAI Configuration
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
-    OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-5")
+    OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o")
     AI_PRIMARY_MODEL: str = os.getenv("AI_PRIMARY_MODEL", OPENAI_MODEL)
     AI_PRIMARY_TEMPERATURE: float = _get_env_float("AI_PRIMARY_TEMPERATURE", 0.8)
     AI_PRIMARY_CONTEXT_WINDOW: int = _get_env_int("AI_PRIMARY_CONTEXT_WINDOW", 2000)
 
-    AI_HANDWRITING_MODEL: str = os.getenv(
-        "AI_HANDWRITING_MODEL", "gpt-4.1-mini"
+    AI_HANDWRITING_MODEL: str = os.getenv("AI_HANDWRITING_MODEL", "gpt-5")
+    AI_HANDWRITING_REASONING_EFFORT: str = os.getenv(
+        "AI_HANDWRITING_REASONING_EFFORT", "high"
     )
     AI_HANDWRITING_TEMPERATURE: float = _get_env_float("AI_HANDWRITING_TEMPERATURE", 0.3)
     AI_HANDWRITING_CONTEXT_WINDOW: int = _get_env_int("AI_HANDWRITING_CONTEXT_WINDOW", 4000)

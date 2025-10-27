@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 class AIFieldMapper:
-    """Uses OpenAI GPT models (default: gpt-5) to map OCR text to template fields"""
+    """Uses OpenAI GPT models (default: gpt-4o) to map OCR text to template fields"""
 
     def __init__(
         self,
@@ -45,7 +45,7 @@ class AIFieldMapper:
 
         Args:
             api_key: OpenAI API key
-            model: Model name (default: gpt-5)
+            model: Model name (default: gpt-4o)
         """
         self.api_key = api_key
         self.model = model
