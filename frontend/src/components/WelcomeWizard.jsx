@@ -17,6 +17,7 @@ const WelcomeWizard = ({ onComplete }) => {
   const [templateId, setTemplateId] = useState(null);
   const [templateFields, setTemplateFields] = useState([]);
   const [templateName, setTemplateName] = useState('Yeni Şablon');
+  const [templateError, setTemplateError] = useState(null);
   const [loading, setLoading] = useState(false);
 
   const hasEnabledFields = templateFields.some(field => field.enabled !== false);
@@ -126,6 +127,8 @@ const WelcomeWizard = ({ onComplete }) => {
     }
 
     setTemplateFile(file);
+    setTemplateId(null);
+    setTemplateError(null);
     setLoading(true);
 
     try {
@@ -139,14 +142,6 @@ const WelcomeWizard = ({ onComplete }) => {
         : 'Yeni Şablon';
 
       setTemplateName(derivedName);
-
-      // Create template in database
-      const template = await createTemplate(
-        derivedName || 'Yeni Şablon',
-        normalizedFields,
-        {}
-      );
-      setTemplateId(template.id);
 
       toast.success(`Excel şablonu yüklendi! ${result.field_count} alan bulundu.`);
     } catch (error) {
@@ -191,12 +186,8 @@ const WelcomeWizard = ({ onComplete }) => {
   };
 
   const handlePrepareAnalysis = async () => {
-    if (!templateId) {
-      toast.error('Şablon oluşturulamadı');
-      return;
-    }
-
     setLoading(true);
+    setTemplateError(null);
 
     try {
       if (templateFields.length > 0) {
@@ -205,13 +196,38 @@ const WelcomeWizard = ({ onComplete }) => {
         setTemplateName(effectiveName);
         const normalizedFields = templateFields.map(field => normalizeFieldDefaults(field));
         setTemplateFields(normalizedFields);
-        await updateTemplateFields(templateId, normalizedFields, effectiveName);
-      }
 
-      toast.success('Alan ayarları kaydedildi');
-      setStep(3);
+        let currentTemplateId = templateId;
+        let created = false;
+
+        if (!currentTemplateId) {
+          const template = await createTemplate(
+            effectiveName,
+            normalizedFields,
+            {}
+          );
+          currentTemplateId = template.id;
+          setTemplateId(template.id);
+          created = true;
+        }
+
+        if (!created) {
+          await updateTemplateFields(currentTemplateId, normalizedFields, effectiveName);
+        }
+
+        toast.success('Alan ayarları kaydedildi');
+        setStep(3);
+      }
     } catch (error) {
-      toast.error('Alan ayarları kaydedilemedi: ' + (error.response?.data?.detail || error.message));
+      const detail = error.response?.data?.detail || error.message;
+
+      if (error.response?.status === 409) {
+        const conflictMessage = detail || 'Bu isimde bir şablon zaten var. Lütfen farklı bir isim girin.';
+        setTemplateError(conflictMessage);
+        toast.error(conflictMessage);
+      } else {
+        toast.error('Alan ayarları kaydedilemedi: ' + detail);
+      }
     } finally {
       setLoading(false);
     }
@@ -343,11 +359,23 @@ const WelcomeWizard = ({ onComplete }) => {
                 <label className="block text-sm font-medium text-gray-700 mb-1">Şablon Adı</label>
                 <input
                   type="text"
-                  className="border rounded px-3 py-2 w-full"
+                  className={`border rounded px-3 py-2 w-full ${
+                    templateError
+                      ? 'border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500'
+                      : 'border-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500'
+                  }`}
                   value={templateName}
-                  onChange={(e) => setTemplateName(e.target.value)}
+                  onChange={(e) => {
+                    setTemplateName(e.target.value);
+                    if (templateError) {
+                      setTemplateError(null);
+                    }
+                  }}
                   placeholder="Örn: Fatura Şablonu"
                 />
+                {templateError && (
+                  <p className="text-sm text-red-600 mt-1">{templateError}</p>
+                )}
               </div>
               <h3 className="font-medium mb-2">Bulunan Alanlar</h3>
               <div className="flex items-center justify-between mb-2">
@@ -447,7 +475,7 @@ const WelcomeWizard = ({ onComplete }) => {
             >
               Geri
             </button>
-            {templateFile && templateId && (
+            {templateFile && templateFields.length > 0 && (
               <button
                 onClick={handlePrepareAnalysis}
                 className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:bg-gray-400"
