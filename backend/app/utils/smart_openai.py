@@ -1,10 +1,35 @@
 """Utility helpers for interacting with OpenAI responses and reasoning models."""
 from __future__ import annotations
 
+import inspect
 import logging
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 logger = logging.getLogger(__name__)
+
+
+def _method_accepts_keyword(method: Any, keyword: str) -> bool:
+    """Return ``True`` if the callable ``method`` accepts ``keyword``.
+
+    Some OpenAI SDK releases expose ``responses.create`` without ``**kwargs``
+    support which causes ``TypeError`` when we pass optional parameters like
+    ``response_format``.  The helper inspects the signature defensively and
+    ensures we only forward the keyword when it is explicitly supported.
+    """
+
+    if method is None:
+        return False
+
+    try:
+        signature = inspect.signature(method)
+    except (TypeError, ValueError):  # pragma: no cover - defensive fallback
+        return False
+
+    for parameter in signature.parameters.values():
+        if parameter.kind == inspect.Parameter.VAR_KEYWORD:
+            return True
+
+    return keyword in signature.parameters
 
 
 def _iter_content_items(output: Iterable[Any]) -> Iterable[Any]:
@@ -182,8 +207,15 @@ def _call_reasoning_model(
         "reasoning": {"effort": reasoning_effort},
     }
 
-    if response_format:
+    if response_format and _method_accepts_keyword(
+        getattr(getattr(client, "responses", None), "create", None),
+        "response_format",
+    ):
         request_kwargs["response_format"] = response_format
+    elif response_format:
+        logger.debug(
+            "Responses.create response_format desteği yok, parametre atlandı."
+        )
 
     if temperature is not None:
         request_kwargs["temperature"] = temperature
