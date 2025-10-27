@@ -243,6 +243,21 @@ class HandwritingInterpreter:
             targeted_snippets = self._build_field_snippets(
                 field_result, low_conf_threshold
             )
+            primary_value = primary_data.get("value")
+            primary_conf = self._safe_float(primary_data.get("confidence"))
+            primary_conf_str = (
+                f"{primary_conf:.2f}" if primary_conf is not None else "bilinmiyor"
+            )
+            analysis = (
+                "Alan analizi:\n"
+                f"Alan: {field_name}\n"
+                f"Tip: {config.get('data_type') or 'bilinmiyor'}\n\n"
+                "İLK ANALİZ (LLM-1) SONUCU:\n"
+                f"  - Değer: {primary_value}\n"
+                f"  - Güven: {primary_conf_str}\n"
+                "  - DÜŞÜK NEDEN: Muhtemelen OCR hatası, eksik veri veya el yazısı zorluğu\n"
+                "  - Bu alanı yeniden değerlendirirken yukarıdaki OCR hata stratejilerini uygula"
+            )
             field_context = {
                 "field_config": config,
                 "primary_suggestion": primary_data,
@@ -250,14 +265,43 @@ class HandwritingInterpreter:
                 "hint": hints.get(field_name),
                 "targeted_snippets": targeted_snippets,
             }
+            sections.append(analysis)
             sections.append(
                 f"Alan: {field_name}\n" + json.dumps(field_context, ensure_ascii=False)
             )
 
         instructions = (
-            "Lütfen sadece JSON döndür. Şema: {\"field_mappings\": {"
-            "<alan_adı>: {\"value\": str | null, \"confidence\": float, \"notes\": str?}}}."
-            " Değerleri tahmin ederken OCR bağlamını ve ipuçlarını kullan."
+            "TALİMAT SETİ:\n\n"
+            "Amaç: İlk analizde (LLM-1) düşük güven alan değerlerini OCR hataları, el yazısı zorlukları"
+            " ve bağlamsal ipuçlarını kullanarak yeniden değerlendirip doğru sonuçları üretmek.\n\n"
+            "Öncelik Hiyerarşisi:\n"
+            "  1. İlk analizin yüksek güvenli sonuçlarını referans al\n"
+            "  2. Belge context'inden eksik bilgileri tamamla\n"
+            "  3. Yaygın OCR hatalarını düzelt (0↔O, 1↔I↔l, Türkçe karakterler)\n"
+            "  4. El yazısı için semantik bağlama dayalı tahmin yap\n"
+            "  5. Kesinlikle emin değilsen null döndür ve notes'ta nedenini belirt\n\n"
+            "OCR Hata Düzeltme Stratejileri:\n"
+            "  - Sayı/Harf: 0↔O, 1↔I↔l, 5↔S, 8↔B\n"
+            "  - Türkçe: ı→i, ş→s, ğ→g, ü→u, ö→o, ç→c\n"
+            "  - Boşluk: \"Makine No\" → \"MakineNo\" veya \"Makine  No\"\n"
+            "  - Satır kırılmaları: Çok satırlı alanları birleştir\n\n"
+            "Normalizasyon:\n"
+            "  - Tarihler: DD.MM.YYYY veya DD/MM/YYYY\n"
+            "  - Sayılar: 1.234,56 formatı\n"
+            "  - Makine/Form No: Standart format varsa uygula\n\n"
+            "Güven Politikası:\n"
+            "  - OCR+Context+Düzeltme ile kesin: ≥0.85\n"
+            "  - Güçlü bağlamsal kanıt: 0.70-0.84\n"
+            "  - Orta tahmin/tamamlama: 0.50-0.69\n"
+            "  - Zayıf kanıt: 0.30-0.49\n"
+            "  - Hiç kanıt yok: <0.30 ve null\n\n"
+            "Reasoning İpuçları:\n"
+            "  - \"15.03\" gördüysen yıl 2024 olabilir\n"
+            "  - Makine Adı eksikse belgenin başka yerinde ara\n"
+            "  - Malzeme + İşçilik = Toplam (hesapla)\n"
+            "  - Form başındaki tarih referans olabilir\n"
+            "  - Teknisyen/Operatör: 2 kelime (Ad Soyad)\n\n"
+            "Lütfen sadece JSON döndür. Şema: {\"field_mappings\": {\"<alan_adı>\": {\"value\": str | null, \"confidence\": float, \"notes\": str?}}}."
         )
         sections.append("Çıktı Talimatı: " + instructions)
 
@@ -296,8 +340,11 @@ class HandwritingInterpreter:
             {
                 "role": "system",
                 "content": (
-                    "Sen el yazısı çözümleme uzmanısın."
-                    " Lütfen değerleri dikkatle değerlendir ve sadece JSON döndür."
+                    "Sen bir OCR hata düzeltme ve el yazısı çözümleme uzmanısın. "
+                    "Görevin, düşük güvenli alan değerlerini bağlamsal ipuçları, OCR hata kalıpları"
+                    " ve mantıksal çıkarım kullanarak düzeltmek ve tamamlamaktır. "
+                    "Yaygın OCR hataları: 0↔O, 1↔I↔l, Türkçe karakterler (ı→i, ş→s). "
+                    "Sadece geçerli JSON döndür."
                 ),
             },
             {"role": "user", "content": prompt},
@@ -686,7 +733,7 @@ class HandwritingInterpreter:
 
                 segment = {
                     "label": f"Sayfa {page_number} özeti",
-                    "text": page_text[:1000],
+                    "text": page_text,
                 }
                 if page_number is not None:
                     segment["page"] = page_number
@@ -696,7 +743,7 @@ class HandwritingInterpreter:
             segments.append(
                 {
                     "label": "Belge başlangıcı",
-                    "text": base_text[:1000],
+                    "text": base_text,
                 }
             )
 
