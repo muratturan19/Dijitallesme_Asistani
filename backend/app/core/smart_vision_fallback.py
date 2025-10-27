@@ -2,10 +2,13 @@
 """Fallback helper that invokes OpenAI Vision models when OCR quality is low."""
 from __future__ import annotations
 
+import base64
 import copy
 import json
 import logging
+import mimetypes
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from ..utils.smart_openai import extract_reasoning_response_text
@@ -159,6 +162,10 @@ class SmartVisionFallback:
         logger.debug("Vision fallback istemi hazırlandı: %s", instructions)
 
         response_payload: Any
+        image_content = self._prepare_image_content(file_path)
+        if image_content is None:
+            return {"field_mappings": {}, "error": "image_load_failed"}
+
         try:
             responses_api = getattr(self._client, "responses", None)
             if responses_api is not None and hasattr(responses_api, "create"):
@@ -181,10 +188,7 @@ class SmartVisionFallback:
                             "role": "user",
                             "content": [
                                 {"type": "input_text", "text": instructions},
-                                {
-                                    "type": "input_image",
-                                    "image_url": f"file://{file_path}",
-                                },
+                                image_content,
                             ],
                         },
                     ],
@@ -229,6 +233,33 @@ class SmartVisionFallback:
         return {
             "field_mappings": field_mappings,
             "raw_response": response_payload,
+        }
+
+    @staticmethod
+    def _prepare_image_content(file_path: str) -> Optional[Dict[str, Any]]:
+        """Return image payload compatible with OpenAI vision endpoints."""
+
+        path = Path(file_path)
+        if not path.exists():
+            logger.error("Vision fallback dosya bulunamadı: %s", file_path)
+            return None
+
+        try:
+            data = path.read_bytes()
+        except OSError as exc:  # pragma: no cover - filesystem errors are rare
+            logger.error("Vision fallback dosyası okunamadı: {0}".format(exc))
+            return None
+
+        mime_type, _ = mimetypes.guess_type(str(path))
+        if not mime_type:
+            mime_type = "application/octet-stream"
+
+        encoded = base64.b64encode(data).decode("ascii")
+        data_url = f"data:{mime_type};base64,{encoded}"
+
+        return {
+            "type": "input_image",
+            "image_url": data_url,
         }
 
     def _build_instruction_prompt(

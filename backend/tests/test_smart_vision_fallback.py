@@ -43,7 +43,9 @@ def low_quality_ocr_result() -> Dict[str, Any]:
     }
 
 
-def test_low_confidence_triggers_vision_call(low_quality_ocr_result: Dict[str, Any]) -> None:
+def test_low_confidence_triggers_vision_call(
+    low_quality_ocr_result: Dict[str, Any], tmp_path
+) -> None:
     """Vision fallback should run and return parsed field mappings."""
 
     payload = {
@@ -70,8 +72,11 @@ def test_low_confidence_triggers_vision_call(low_quality_ocr_result: Dict[str, A
     assert report is not None
     assert 'low_confidence' in report.reasons
 
+    image_path = tmp_path / "test.png"
+    image_path.write_bytes(b"fake image bytes")
+
     response = fallback.extract_with_vision(
-        "/tmp/test.png",
+        str(image_path),
         [{'field_name': 'invoice_no'}],
         ocr_fallback=low_quality_ocr_result['text'],
     )
@@ -80,6 +85,9 @@ def test_low_confidence_triggers_vision_call(low_quality_ocr_result: Dict[str, A
     assert response['field_mappings']['invoice_no']['value'] == 'V123'
     assert client.responses.last_kwargs is not None
     assert client.responses.last_kwargs['model'] == 'gpt-4o-mini'
+    content = client.responses.last_kwargs['input'][1]['content'][1]
+    assert content['type'] == 'input_image'
+    assert str(content['image_url']).startswith('data:')
 
 
 def test_merge_prefers_highest_confidence() -> None:
