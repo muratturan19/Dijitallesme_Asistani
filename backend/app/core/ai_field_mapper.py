@@ -7,6 +7,10 @@ from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
 from app.config import settings
+from app.utils.smart_openai import (
+    call_reasoning_model,
+    extract_reasoning_response_text,
+)
 
 try:  # pragma: no cover - prefer modern OpenAI client
     from openai import OpenAI, AuthenticationError, OpenAIError
@@ -178,15 +182,21 @@ class AIFieldMapper:
             if self._client is not None:
                 self._refresh_response_format_support()
                 if is_reasoning_model:
-                    request_kwargs = {
-                        "model": self.model,
-                        "input": messages,
-                        "text": {"format": {"type": "json_object"}},
-                        "reasoning": {"effort": "medium"},
-                    }
-                    if temperature is not None:
-                        request_kwargs["temperature"] = temperature
-                    response = self._client.responses.create(**request_kwargs)
+                    responses_response_format = None
+                    if response_format and self._responses_accepts_response_format:
+                        responses_response_format = response_format
+                    elif response_format:
+                        logger.debug(
+                            "response_format desteği olmayan Responses.create kullanımı tespit edildi"
+                        )
+
+                    response = call_reasoning_model(
+                        self._client,
+                        model=self.model,
+                        messages=messages,
+                        response_format=responses_response_format,
+                        temperature=temperature,
+                    )
                 else:
                     request_kwargs = {
                         "model": self.model,
@@ -356,50 +366,20 @@ class AIFieldMapper:
             logger.info("_extract_ai_message: response nesnesi None geldi")
             return None
 
-        output_text = getattr(response, "output_text", None)
-        if output_text:
-            text = str(output_text).strip()
-            if text:
-                logger.info(
-                    "_extract_ai_message: output_text alanı kullanıldı (uzunluk=%s)",
-                    len(text),
-                )
-                return text
+        reasoning_text = extract_reasoning_response_text(response)
+        if reasoning_text:
+            logger.info(
+                "_extract_ai_message: reasoning output işlendi (uzunluk=%s)",
+                len(reasoning_text),
+            )
+            return reasoning_text
 
         output_items = getattr(response, "output", None)
         if output_items:
-            parts: List[str] = []
-            for item in output_items:
-                content = getattr(item, "content", None)
-                if content is None and isinstance(item, dict):
-                    content = item.get("content")
-
-                if not content:
-                    continue
-
-                for piece in content:
-                    if isinstance(piece, dict):
-                        text_part = piece.get("text") or piece.get("value")
-                        if text_part:
-                            parts.append(str(text_part))
-                            continue
-                        if piece.get("type") == "output_text" and piece.get("text"):
-                            parts.append(str(piece.get("text")))
-                            continue
-
-                    text_attr = getattr(piece, "text", None)
-                    if text_attr:
-                        parts.append(str(text_attr))
-
-            if parts:
-                joined = "".join(parts).strip()
-                if joined:
-                    logger.info(
-                        "_extract_ai_message: output alanı işlendi (öğe_sayısı=%s, uzunluk=%s)",
-                        len(output_items),
-                        len(joined),
-                    )
-                    return joined
+            logger.info(
+                "_extract_ai_message: output alanı mevcut ancak metin çıkarılamadı (öğe_sayısı=%s)",
+                len(output_items),
+            )
 
         try:
             choices = response.choices  # type: ignore[attr-defined]
