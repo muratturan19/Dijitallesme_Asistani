@@ -49,8 +49,12 @@ class Settings:
     AI_HANDWRITING_REASONING_EFFORT: str = os.getenv(
         "AI_HANDWRITING_REASONING_EFFORT", "high"
     )
-    AI_HANDWRITING_TEMPERATURE: float = _get_env_float("AI_HANDWRITING_TEMPERATURE", 0.3)
-    AI_HANDWRITING_CONTEXT_WINDOW: int = _get_env_int("AI_HANDWRITING_CONTEXT_WINDOW", 4000)
+    AI_HANDWRITING_TEMPERATURE: float = _get_env_float(
+        "AI_HANDWRITING_TEMPERATURE", 0.3
+    )  # top_p'ye çevrilir (reasoning için)
+    AI_HANDWRITING_CONTEXT_WINDOW: int = _get_env_int(
+        "AI_HANDWRITING_CONTEXT_WINDOW", 4000
+    )  # reasoning modellerinde max_output_tokens olarak kullanılır
     AI_HANDWRITING_LOW_CONFIDENCE_THRESHOLD: float = _get_env_float(
         "AI_HANDWRITING_LOW_CONFIDENCE_THRESHOLD", 0.55
     )
