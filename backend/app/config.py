@@ -45,7 +45,7 @@ class Settings:
     AI_PRIMARY_TEMPERATURE: float = _get_env_float("AI_PRIMARY_TEMPERATURE", 0.8)
     AI_PRIMARY_CONTEXT_WINDOW: int = _get_env_int("AI_PRIMARY_CONTEXT_WINDOW", 2000)
 
-    AI_HANDWRITING_MODEL: str = os.getenv("AI_HANDWRITING_MODEL", "gpt-4.1-handwriting")
+    AI_HANDWRITING_MODEL: str = os.getenv("AI_HANDWRITING_MODEL", "gpt-5")
     AI_HANDWRITING_TEMPERATURE: float = _get_env_float("AI_HANDWRITING_TEMPERATURE", 0.3)
     AI_HANDWRITING_CONTEXT_WINDOW: int = _get_env_int("AI_HANDWRITING_CONTEXT_WINDOW", 4000)
     AI_HANDWRITING_LOW_CONFIDENCE_THRESHOLD: float = _get_env_float(

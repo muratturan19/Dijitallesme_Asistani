@@ -10,7 +10,10 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from app.config import settings
-from app.utils.smart_openai import extract_reasoning_response_text
+from app.utils.smart_openai import (
+    call_reasoning_model,
+    extract_reasoning_response_text,
+)
 
 try:  # pragma: no cover - prefer modern OpenAI client
     from openai import AuthenticationError, OpenAI, OpenAIError
@@ -284,15 +287,28 @@ class HandwritingInterpreter:
 
         try:
             if self._client is not None:  # pragma: no cover - requires modern SDK
-                request_kwargs = {
-                    "model": self.model,
-                    "messages": messages,
-                    "max_completion_tokens": self.context_window,
-                    "response_format": {"type": "json_object"},
-                }
-                if temperature is not None:
-                    request_kwargs["temperature"] = temperature
-                response = self._client.chat.completions.create(**request_kwargs)
+                if is_reasoning_model:
+                    extra_kwargs = None
+                    if self.context_window:
+                        extra_kwargs = {"max_output_tokens": self.context_window}
+                    response = call_reasoning_model(
+                        self._client,
+                        model=self.model,
+                        messages=messages,
+                        response_format={"type": "json_object"},
+                        temperature=temperature,
+                        extra_kwargs=extra_kwargs,
+                    )
+                else:
+                    request_kwargs = {
+                        "model": self.model,
+                        "messages": messages,
+                        "max_completion_tokens": self.context_window,
+                        "response_format": {"type": "json_object"},
+                    }
+                    if temperature is not None:
+                        request_kwargs["temperature"] = temperature
+                    response = self._client.chat.completions.create(**request_kwargs)
                 response_payload.update(self._parse_openai_response(response))
             elif openai is not None:  # pragma: no cover - legacy SDK
                 request_kwargs = {
@@ -387,6 +403,12 @@ class HandwritingInterpreter:
                 "completion_tokens": getattr(usage, "completion_tokens", None),
                 "total_tokens": getattr(usage, "total_tokens", None),
             }
+            input_tokens = getattr(usage, "input_tokens", None)
+            output_tokens = getattr(usage, "output_tokens", None)
+            if input_tokens is not None:
+                usage_payload["input_tokens"] = input_tokens
+            if output_tokens is not None:
+                usage_payload["output_tokens"] = output_tokens
 
         return {"field_mappings": normalized, "usage": usage_payload}
 

@@ -103,29 +103,35 @@ def _normalize_content_block(item: Any) -> Optional[Dict[str, Any]]:
     if item is None:
         return None
 
+    def _normalize_text_payload(value: Any) -> Dict[str, Any]:
+        text_value = "" if value is None else str(value)
+        return {"type": "input_text", "text": text_value}
+
     if isinstance(item, dict):
-        block_type = item.get("type")
-        if block_type:
-            # Ensure text-like payloads have a "text" field populated.
-            if block_type == "text":
-                text_value = item.get("text")
-                if text_value is None:
-                    text_value = item.get("value")
-                    if text_value is not None:
-                        item = {**item, "text": str(text_value)}
-            return dict(item)
+        block: Dict[str, Any] = dict(item)
+        block_type = (block.get("type") or "").lower()
 
-        if "text" in item:
-            return {"type": "text", "text": str(item["text"])}
-        if "value" in item:
-            return {"type": "text", "text": str(item["value"])}
+        if block_type in {"input_text", "text", "plain_text", "message"}:
+            text_value = block.get("text")
+            if text_value is None:
+                text_value = block.get("value")
+            return _normalize_text_payload(text_value)
 
-        return {"type": "text", "text": str(item)}
+        if block_type in {"input_image", "image"}:
+            block["type"] = "input_image"
+            return block
+
+        if "text" in block:
+            return _normalize_text_payload(block.get("text"))
+        if "value" in block:
+            return _normalize_text_payload(block.get("value"))
+
+        return _normalize_text_payload(block)
 
     if isinstance(item, str):
-        return {"type": "text", "text": item}
+        return {"type": "input_text", "text": item}
 
-    return {"type": "text", "text": str(item)}
+    return {"type": "input_text", "text": str(item)}
 
 
 def _normalize_message_for_responses(message: Dict[str, Any]) -> Dict[str, Any]:

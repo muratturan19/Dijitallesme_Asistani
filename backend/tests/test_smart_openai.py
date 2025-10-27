@@ -25,13 +25,13 @@ def test_normalize_messages_with_plain_text():
         {
             "role": "system",
             "content": [
-                {"type": "text", "text": "hello"},
+                {"type": "input_text", "text": "hello"},
             ],
         },
         {
             "role": "user",
             "content": [
-                {"type": "text", "text": "world"},
+                {"type": "input_text", "text": "world"},
             ],
         },
     ]
@@ -60,11 +60,11 @@ def test_normalize_messages_with_mixed_content():
             "role": "user",
             "metadata": {"foo": "bar"},
             "content": [
-                {"type": "text", "text": "first"},
-                {"type": "text", "text": "second"},
-                {"type": "text", "text": "third"},
+                {"type": "input_text", "text": "first"},
+                {"type": "input_text", "text": "second"},
+                {"type": "input_text", "text": "third"},
                 {"type": "input_text", "text": "fourth"},
-                {"type": "text", "text": "5"},
+                {"type": "input_text", "text": "5"},
             ],
         }
     ]
@@ -101,7 +101,7 @@ def test_call_reasoning_model_uses_normalized_messages():
     call_kwargs = client.responses.calls[0]
     assert call_kwargs["model"] == "gpt-test"
     assert call_kwargs["input"] == [
-        {"role": "system", "content": [{"type": "text", "text": "sys"}]},
-        {"role": "user", "content": [{"type": "text", "text": "usr"}]},
+        {"role": "system", "content": [{"type": "input_text", "text": "sys"}]},
+        {"role": "user", "content": [{"type": "input_text", "text": "usr"}]},
     ]
 
