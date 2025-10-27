@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Shared helpers for applying template OCR overrides."""
 
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 from ..core.image_processor import ImageProcessor, ProcessedDocument
 from ..core.ocr_engine import OCREngine
@@ -224,9 +224,88 @@ def run_field_level_ocr(
     return results
 
 
+def _merge_field_hints(
+    base_hints: Optional[Dict[str, Dict[str, Any]]],
+    learned_hints: Optional[Dict[str, Dict[str, Any]]],
+) -> Dict[str, Dict[str, Any]]:
+    """Combine template rule hints with learned hints without losing overrides."""
+
+    normalized: Dict[str, Dict[str, Any]] = {
+        key: dict(value)
+        for key, value in (base_hints or {}).items()
+        if isinstance(value, dict)
+    }
+
+    if not learned_hints:
+        return normalized
+
+    for field_name, learned in learned_hints.items():
+        if not field_name or not isinstance(learned, dict):
+            continue
+
+        target = normalized.setdefault(field_name, {})
+
+        for hint_key, hint_value in learned.items():
+            if hint_value in (None, "", [], {}):
+                continue
+
+            if hint_key == "regex_patterns":
+                existing = target.setdefault("regex_patterns", [])
+                if isinstance(hint_value, list):
+                    for pattern in hint_value:
+                        if pattern and pattern not in existing:
+                            existing.append(pattern)
+                elif hint_value not in existing:
+                    existing.append(hint_value)
+                continue
+
+            if hint_key == "examples":
+                merged_examples: List[Any] = []
+                seen_examples = set()
+                current = target.get("examples")
+                source_list: List[Any] = []
+
+                if isinstance(current, list):
+                    source_list.extend(current)
+                elif current not in (None, ""):
+                    source_list.append(current)
+
+                if isinstance(hint_value, list):
+                    source_list.extend(hint_value)
+                elif hint_value not in (None, ""):
+                    source_list.append(hint_value)
+
+                for item in source_list:
+                    if item in (None, ""):
+                        continue
+                    if item in seen_examples:
+                        continue
+                    seen_examples.add(item)
+                    merged_examples.append(item)
+
+                if merged_examples:
+                    target["examples"] = merged_examples
+                continue
+
+            if hint_key not in target or target[hint_key] in (None, "", [], {}):
+                target[hint_key] = hint_value
+
+    return {
+        field: {
+            key: value
+            for key, value in hints.items()
+            if value not in (None, "", [], {})
+        }
+        for field, hints in normalized.items()
+        if any(value not in (None, "", [], {}) for value in hints.values())
+    }
+
+
 def build_runtime_configuration(
     extraction_rules: Optional[Union[TemplateExtractionRules, Dict[str, Any]]],
-    default_language: str
+    default_language: str,
+    *,
+    learned_hints: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Prepare reusable runtime structures from stored template rules."""
 
@@ -240,7 +319,10 @@ def build_runtime_configuration(
     preprocessing_profile = resolve_preprocessing_profile(rules_obj)
     ocr_options = resolve_ocr_options(rules_obj)
     field_rules = resolve_field_rules(rules_obj)
-    field_hints = rules_obj.build_field_hints()
+    field_hints = _merge_field_hints(
+        rules_obj.build_field_hints(),
+        learned_hints,
+    )
     applied_summary = rules_obj.audit_summary(
         effective_language=effective_language,
         global_ocr_options=ocr_options,

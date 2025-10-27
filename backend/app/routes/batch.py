@@ -15,10 +15,52 @@ from .ocr_utils import (
     run_field_level_ocr
 )
 from ..core.ai_field_mapper import AIFieldMapper
+from ..core.template_learning_service import TemplateLearningService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/batch", tags=["batch"])
+
+
+async def _run_learning_refresh(db_path: str, template_id: int) -> None:
+    """Refresh learned hints in background after batch corrections."""
+
+    await asyncio.sleep(0)
+
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    engine = create_engine(db_path, connect_args={"check_same_thread": False})
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    db = SessionLocal()
+
+    try:
+        service = TemplateLearningService(db)
+        hints = service.generate_template_hints(template_id=template_id)
+        logger.debug(
+            "Otomatik öğrenme yenilemesi planlandı: template=%s, alan_sayısı=%d",
+            template_id,
+            len(hints),
+        )
+    except Exception:
+        logger.exception(
+            "Otomatik öğrenme yenilemesi başarısız oldu: template=%s",
+            template_id,
+        )
+    finally:
+        db.close()
+
+
+def _schedule_learning_refresh(db_path: str, template_id: int) -> None:
+    """Schedule automatic learning refresh when corrections become available."""
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.run(_run_learning_refresh(db_path, template_id))
+        return
+
+    loop.create_task(_run_learning_refresh(db_path, template_id))
 
 
 async def process_document_task(
@@ -51,9 +93,13 @@ async def process_document_task(
             logger.error(f"Belge veya şablon bulunamadı: doc={document_id}, tpl={template_id}")
             return
 
+        learning_service = TemplateLearningService(db)
+        learned_hints = learning_service.load_learned_hints(template.id)
+
         runtime_config = build_runtime_configuration(
             template.extraction_rules,
-            settings.TESSERACT_LANG
+            settings.TESSERACT_LANG,
+            learned_hints=learned_hints or None
         )
         global_profile = runtime_config['preprocessing_profile']
         global_ocr_options = runtime_config['ocr_options']
@@ -126,6 +172,12 @@ async def process_document_task(
             if field_results:
                 ocr_result.setdefault('field_results', field_results)
 
+        logger.debug(
+            "AIFieldMapper'e iletilen ipuçları: toplam=%d, öğrenilmiş_alanlar=%s",
+            len(field_hints or {}),
+            sorted(learned_hints.keys()) if learned_hints else []
+        )
+
         mapping_result = ai_mapper.map_fields(
             ocr_result['text'],
             template.target_fields,
@@ -162,6 +214,8 @@ async def process_document_task(
         )
         logger.debug("Uygulanan kurallar: %s", applied_rules)
 
+        _schedule_learning_refresh(db_path, template_id)
+
     except Exception as e:
         logger.error(f"Belge işleme hatası {document_id}: {str(e)}")
         if document:
@@ -191,9 +245,13 @@ async def start_batch_processing(
         if not template:
             raise HTTPException(status_code=404, detail="Şablon bulunamadı")
 
+        learning_service = TemplateLearningService(db)
+        learned_hints = learning_service.load_learned_hints(template.id)
+
         runtime_config = build_runtime_configuration(
             template.extraction_rules,
-            settings.TESSERACT_LANG
+            settings.TESSERACT_LANG,
+            learned_hints=learned_hints or None
         )
 
         # Get pending documents for this template
@@ -270,9 +328,12 @@ async def get_batch_status(batch_job_id: int, db: Session = Depends(get_db)):
 
         applied_rules: Optional[Dict[str, Any]] = None
         if batch_job.template:
+            learning_service = TemplateLearningService(db)
+            learned_hints = learning_service.load_learned_hints(batch_job.template.id)
             runtime_config = build_runtime_configuration(
                 batch_job.template.extraction_rules,
-                settings.TESSERACT_LANG
+                settings.TESSERACT_LANG,
+                learned_hints=learned_hints or None
             )
             applied_rules = runtime_config['summary']
 

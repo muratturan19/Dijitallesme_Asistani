@@ -18,6 +18,7 @@ from .ocr_utils import (
     run_field_level_ocr
 )
 from ..core.ai_field_mapper import AIFieldMapper
+from ..core.template_learning_service import TemplateLearningService
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +51,8 @@ async def analyze_document(
 
         runtime_config: Optional[Dict[str, Any]] = None
 
+        learned_hints: Dict[str, Dict[str, Any]] = {}
+
         if request.template_id:
             template_manager = TemplateManager(db)
             template = template_manager.get_template(request.template_id)
@@ -62,9 +65,12 @@ async def analyze_document(
                 field for field in all_template_fields
                 if field.get('enabled', True)
             ]
+            learning_service = TemplateLearningService(db)
+            learned_hints = learning_service.load_learned_hints(template.id)
             runtime_config = build_runtime_configuration(
                 template.extraction_rules,
-                settings.TESSERACT_LANG
+                settings.TESSERACT_LANG,
+                learned_hints=learned_hints or None
             )
         else:
             raise HTTPException(
@@ -76,7 +82,11 @@ async def analyze_document(
         document.status = "processing"
         db.commit()
 
-        runtime_config = runtime_config or build_runtime_configuration({}, settings.TESSERACT_LANG)
+        runtime_config = runtime_config or build_runtime_configuration(
+            {},
+            settings.TESSERACT_LANG,
+            learned_hints=learned_hints or None
+        )
         global_profile = runtime_config['preprocessing_profile']
         global_ocr_options = runtime_config['ocr_options']
         field_rules = runtime_config['field_rules']
@@ -161,6 +171,11 @@ async def analyze_document(
                 ocr_result.setdefault('field_results', field_results)
 
         if template_fields:
+            logger.debug(
+                "AIFieldMapper'e iletilen ipuçları: toplam=%d, öğrenilmiş_alanlar=%s",
+                len(field_hints or {}),
+                sorted(learned_hints.keys()) if learned_hints else []
+            )
             mapping_result = ai_mapper.map_fields(
                 ocr_result['text'],
                 template_fields,
