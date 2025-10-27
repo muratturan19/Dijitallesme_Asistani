@@ -10,6 +10,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from app.config import settings
+from app.utils.smart_openai import extract_reasoning_response_text
 
 try:  # pragma: no cover - prefer modern OpenAI client
     from openai import AuthenticationError, OpenAI, OpenAIError
@@ -337,10 +338,9 @@ class HandwritingInterpreter:
         if response is None:
             return {"field_mappings": {}, "error": "Empty response from specialist model."}
 
-        content: Optional[str] = None
-        if hasattr(response, "output") and response.output:  # pragma: no cover
-            content = response.output[0].content[0].text  # type: ignore[attr-defined]
-        elif hasattr(response, "choices") and response.choices:
+        content: Optional[str] = extract_reasoning_response_text(response)
+
+        if not content and hasattr(response, "choices") and response.choices:
             first_choice = response.choices[0]
             if hasattr(first_choice, "message"):
                 content = getattr(first_choice.message, "content", None)
