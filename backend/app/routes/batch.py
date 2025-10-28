@@ -23,6 +23,10 @@ from ..core.handwriting_interpreter import (
     determine_specialist_candidates,
     merge_field_mappings,
 )
+from ..core.smart_vision_fallback import (
+    SmartVisionFallback,
+    merge_ocr_and_vision_results,
+)
 from ..core.template_learning_service import TemplateLearningService
 
 logger = logging.getLogger(__name__)
@@ -160,7 +164,43 @@ async def process_document_task(
             )
             ocr_result['source'] = 'ocr'
 
-        if not ocr_result or not ocr_result.get('text'):
+        vision_fallback: Optional[SmartVisionFallback] = None
+        vision_quality: Optional[Any] = None
+        vision_response: Optional[Dict[str, Any]] = None
+
+        if settings.OPENAI_API_KEY:
+            try:
+                vision_fallback = SmartVisionFallback(
+                    settings.OPENAI_API_KEY,
+                    settings.AI_VISION_MODEL,
+                )
+                vision_quality = vision_fallback.evaluate_quality(ocr_result)
+
+                if vision_quality.should_fallback:
+                    logger.info(
+                        "Vision fallback tetiklendi: belge=%s, sebepler=%s",
+                        document.id,
+                        vision_quality.reasons,
+                    )
+                    vision_response = vision_fallback.extract_with_vision(
+                        document.file_path,
+                        template.target_fields or [],
+                        ocr_fallback=(ocr_result or {}).get('text', ''),
+                    )
+            except Exception:
+                logger.exception(
+                    "Vision fallback yürütme hatası: belge=%s",
+                    document.id,
+                )
+
+        if (
+            (not ocr_result or not ocr_result.get('text'))
+            and not (
+                vision_response
+                and isinstance(vision_response.get('field_mappings'), dict)
+                and vision_response['field_mappings']
+            )
+        ):
             raise Exception("OCR hatası")
 
         # AI Mapping
@@ -193,13 +233,21 @@ async def process_document_task(
         )
 
         mapping_result = ai_mapper.map_fields(
-            ocr_result['text'],
+            ocr_result.get('text', ''),
             template.target_fields,
             ocr_result,
             field_hints=field_hints
         )
 
         primary_field_mappings = mapping_result.get('field_mappings') or {}
+        augmented_mappings = primary_field_mappings
+
+        if vision_response and vision_response.get('field_mappings'):
+            augmented_mappings = merge_ocr_and_vision_results(
+                primary_field_mappings,
+                vision_response['field_mappings'],
+            )
+
         candidate_configs = determine_specialist_candidates(
             template.target_fields,
             primary_field_mappings,
@@ -227,7 +275,7 @@ async def process_document_task(
                     {
                         'ocr_result': ocr_result,
                         'field_configs': candidate_configs,
-                        'primary_mapping': primary_field_mappings,
+                        'primary_mapping': augmented_mappings,
                         'field_hints': field_hints,
                         'document_info': {
                             'document_id': document.id,
@@ -255,7 +303,7 @@ async def process_document_task(
                 )
 
         merged_mappings = merge_field_mappings(
-            primary_field_mappings,
+            augmented_mappings,
             specialist_mapping,
         )
 
