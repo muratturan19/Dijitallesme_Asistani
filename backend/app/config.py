@@ -35,6 +35,17 @@ def _get_env_int(name: str, default: int) -> int:
         return default
 
 
+def _get_env_bool(name: str, default: bool) -> bool:
+    """Parse boolean environment variables with sensible defaults."""
+
+    value = os.getenv(name)
+    if value in (None, ""):
+        return default
+
+    normalized = value.strip().lower()
+    return normalized in {"1", "true", "yes", "on"}
+
+
 class Settings:
     """Application configuration settings"""
 
@@ -69,10 +80,15 @@ class Settings:
     # Database Configuration
     DATABASE_URL: str = os.getenv("DATABASE_URL", "sqlite:///./digitalization.db")
 
-    # Tesseract Configuration
+    # OCR Configuration
     TESSERACT_CMD: str = os.getenv("TESSERACT_CMD", "tesseract")
     TESSDATA_PREFIX: str = os.getenv("TESSDATA_PREFIX", "")
     TESSERACT_LANG: str = "tur+eng"  # Turkish + English
+    OCR_ENGINE: str = os.getenv("OCR_ENGINE", "tesseract")
+    EASYOCR_USE_GPU: bool = _get_env_bool("EASYOCR_USE_GPU", False)
+
+    # Data Protection
+    DATA_MASKING_ENABLED: bool = _get_env_bool("DATA_MASKING_ENABLED", True)
 
     # File Upload Configuration
     MAX_FILE_SIZE_MB: int = int(os.getenv("MAX_FILE_SIZE_MB", "10"))
@@ -113,16 +129,19 @@ def validate_config():
     if not settings.OPENAI_API_KEY:
         print("⚠️  UYARI: OPENAI_API_KEY ayarlanmamış. AI özellikleri çalışmayacak.")
 
-    tesseract_cmd = settings.TESSERACT_CMD.strip().strip('"')
-    cmd_path = Path(tesseract_cmd)
-    if cmd_path.is_file():
-        exists = cmd_path.exists()
-    else:
-        exists = shutil.which(tesseract_cmd) is not None
+    if settings.OCR_ENGINE.strip().lower() == "tesseract":
+        tesseract_cmd = settings.TESSERACT_CMD.strip().strip('"')
+        cmd_path = Path(tesseract_cmd)
+        if cmd_path.is_file():
+            exists = cmd_path.exists()
+        else:
+            exists = shutil.which(tesseract_cmd) is not None
 
-    if not exists and tesseract_cmd not in {"", "tesseract"}:
-        print(f"⚠️  UYARI: Tesseract bulunamadı: {settings.TESSERACT_CMD}")
-        print("   Tesseract'ı yükleyin: https://github.com/tesseract-ocr/tesseract")
+        if not exists and tesseract_cmd not in {"", "tesseract"}:
+            print(f"⚠️  UYARI: Tesseract bulunamadı: {settings.TESSERACT_CMD}")
+            print("   Tesseract'ı yükleyin: https://github.com/tesseract-ocr/tesseract")
+    else:
+        print("ℹ️  Bilgi: OCR motoru EasyOCR olarak yapılandırıldı.")
 
     return True
 

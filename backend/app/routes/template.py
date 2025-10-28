@@ -28,6 +28,7 @@ from ..core.smart_vision_fallback import (
     SmartVisionFallback,
     merge_ocr_and_vision_results,
 )
+from ..utils.audit_logger import AuditLogger
 
 logger = logging.getLogger(__name__)
 
@@ -386,6 +387,18 @@ async def analyze_document(
 
         if vision_quality.should_fallback:
             response_payload['message'] += " (Vision fallback uygulandı)"
+
+        AuditLogger(db).log_event(
+            "analyze",
+            "document",
+            document.id,
+            metadata={
+                "template_id": request.template_id,
+                "overall_confidence": combined_confidence,
+                "vision_fallback": vision_quality.should_fallback,
+                "specialist_fields": sorted(specialist_mapping.keys()),
+            },
+        )
 
         return response_payload
 
@@ -920,6 +933,13 @@ async def delete_template(template_id: int, db: Session = Depends(get_db)):
 
         if not success:
             raise HTTPException(status_code=404, detail="Şablon bulunamadı")
+
+        AuditLogger(db).log_event(
+            "delete",
+            "template",
+            template_id,
+            metadata={"result": "deleted"},
+        )
 
         return {"message": "Şablon başarıyla silindi"}
 

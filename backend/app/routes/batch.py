@@ -8,6 +8,7 @@ import time
 
 from ..config import settings
 from ..database import get_db, BatchJob, Document, ExtractedData, Template
+from ..utils.audit_logger import AuditLogger
 from ..models import BatchStartRequest, BatchStatusResponse
 from ..core.image_processor import ImageProcessor
 from ..core.ocr_engine import OCREngine
@@ -588,13 +589,20 @@ async def delete_batch_job(batch_job_id: int, db: Session = Depends(get_db)):
             raise HTTPException(status_code=404, detail="Toplu işlem bulunamadı")
 
         # Delete associated documents
-        db.query(Document).filter(
+        deleted_documents = db.query(Document).filter(
             Document.batch_job_id == batch_job_id
         ).delete()
 
         # Delete batch job
         db.delete(batch_job)
         db.commit()
+
+        AuditLogger(db).log_event(
+            "delete",
+            "batch_job",
+            batch_job_id,
+            metadata={"deleted_documents": deleted_documents or 0},
+        )
 
         logger.info(f"Toplu işlem silindi: {batch_job_id}")
 

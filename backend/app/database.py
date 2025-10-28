@@ -190,6 +190,20 @@ class ExtractedData(Base):
     document = relationship("Document", back_populates="extracted_data")
 
 
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    event_type = Column(String(100), nullable=False)
+    resource_type = Column(String(100), nullable=False)
+    resource_id = Column(Integer, nullable=True)
+    user_id = Column(Integer, nullable=True)
+    description = Column(Text, nullable=True)
+    payload = Column(JSON, nullable=True)
+    ip_address = Column(String(45), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
 def init_db():
     logger = logging.getLogger(__name__)
 

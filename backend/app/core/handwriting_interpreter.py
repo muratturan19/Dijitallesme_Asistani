@@ -10,6 +10,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from app.config import settings
+from app.utils.data_masker import DataMasker
 from app.utils.smart_openai import (
     call_reasoning_model,
     extract_reasoning_response_text,
@@ -370,6 +371,8 @@ class HandwritingInterpreter:
             document_info=document_info,
         )
 
+        masker = DataMasker(enabled=settings.DATA_MASKING_ENABLED)
+
         messages = [
             {
                 "role": "system",
@@ -384,13 +387,18 @@ class HandwritingInterpreter:
             {"role": "user", "content": prompt},
         ]
 
+        if masker.enabled:
+            messages = masker.mask_messages(messages)
+
         if not self._has_valid_api_key:
             logger.warning("Uzman modeli çağrılmadı: API anahtarı eksik.")
-            return {
-                "field_mappings": {},
-                "error": "OpenAI API key is missing for specialist model.",
-                "prompt": prompt,
-            }
+            return masker.unmask_structure(
+                {
+                    "field_mappings": {},
+                    "error": "OpenAI API key is missing for specialist model.",
+                    "prompt": prompt,
+                }
+            )
 
         start_time = time.perf_counter()
         response_payload: Dict[str, Any] = {
@@ -431,7 +439,9 @@ class HandwritingInterpreter:
                     if temperature is not None:
                         request_kwargs["temperature"] = temperature
                     response = self._client.chat.completions.create(**request_kwargs)
-                response_payload.update(self._parse_openai_response(response))
+                response_payload.update(
+                    self._parse_openai_response(response, masker)
+                )
             elif openai is not None:  # pragma: no cover - legacy SDK
                 request_kwargs = {
                     "model": self.model,
@@ -441,11 +451,13 @@ class HandwritingInterpreter:
                 if temperature is not None:
                     request_kwargs["temperature"] = temperature
                 response = openai.ChatCompletion.create(**request_kwargs)
-                response_payload.update(self._parse_openai_response(response))
+                response_payload.update(
+                    self._parse_openai_response(response, masker)
+                )
             else:
                 response_payload["error"] = "OpenAI client is not available."
                 response_payload["latency_seconds"] = time.perf_counter() - start_time
-                return response_payload
+                return masker.unmask_structure(response_payload)
 
             latency = time.perf_counter() - start_time
             response_payload["latency_seconds"] = latency
@@ -473,7 +485,7 @@ class HandwritingInterpreter:
             transport=transport,
         )
 
-        return response_payload
+        return masker.unmask_structure(response_payload)
 
     def _build_model_metadata(
         self,
@@ -793,13 +805,16 @@ class HandwritingInterpreter:
         return segments
 
     @staticmethod
-    def _parse_openai_response(response: Any) -> Dict[str, Any]:
+    def _parse_openai_response(
+        response: Any, masker: Optional[DataMasker] = None
+    ) -> Dict[str, Any]:
         """Normalize responses from both modern and legacy OpenAI SDKs."""
 
         if response is None:
             return {"field_mappings": {}, "error": "Empty response from specialist model."}
 
         content: Optional[str] = extract_reasoning_response_text(response)
+        raw_content: Optional[str] = content
 
         if not content and hasattr(response, "choices") and response.choices:
             first_choice = response.choices[0]
@@ -807,14 +822,19 @@ class HandwritingInterpreter:
                 content = getattr(first_choice.message, "content", None)
             else:
                 content = getattr(first_choice, "text", None)
+            raw_content = content
 
         if not content:
             return {"field_mappings": {}, "error": "Specialist model returned no content."}
 
+        if masker is not None:
+            content = masker.unmask_text(content) or content
+
         try:
             data = json.loads(content)
         except json.JSONDecodeError:
-            logger.warning("Uzman modeli JSON parse edilemedi: %s", content[:200])
+            preview_source = raw_content or content or ""
+            logger.warning("Uzman modeli JSON parse edilemedi: %s", preview_source[:200])
             return {
                 "field_mappings": {},
                 "error": "Failed to parse specialist model response.",
