@@ -4,25 +4,26 @@ AI destekli belge dijitalleştirme ve veri çıkarma sistemi. Kullanıcılar bir
 
 ## Özellikler
 
-- 📄 **OCR ile Metin Çıkarma**: Tesseract kullanarak PDF ve görüntülerden metin çıkarma
+- 📄 **Hibrit OCR Motoru**: Tesseract ve isteğe bağlı EasyOCR arasında otomatik seçim yaparak PDF/görsellerden metin çıkarma, düşük kalite durumunda OpenAI Vision fallback'i tetikleme
 - 🤖 **AI Tabanlı Alan Eşleştirme**: OPENAI_MODEL ortam değişkeniyle seçilebilen OpenAI modelleri (varsayılan `gpt-4o`) ile akıllı alan tanıma
 - 📊 **Özelleştirilebilir Şablonlar**: Excel şablonları ile kendi alanlarınızı tanımlayın
 - 🔄 **Toplu İşleme**: Yüzlerce belgeyi aynı anda işleyin
 - ✅ **Güven Skorları**: Düşük güvenilirlikte alanları gözden geçirin
 - 📁 **Excel Dışa Aktarma**: Sonuçları Excel formatında indirin
 - 🌐 **İki Dilli Destek**: Türkçe ve İngilizce belgeler için tam UTF-8 karakter desteği ve dil odaklı işleme yetenekleri
+- 🛡️ **Uçtan Uca Veri Koruması**: LLM isteklerinden önce hassas alanları maskeleyerek ve kritik işlemleri audit loglarına kaydederek güvenliği artırın
 
 ## Son Güncellemeler
 
-- ✍️ **Kullanıcı Düzeltmelerini Öğrenme**: `/api/learning` uç noktaları, tekil veya toplu kullanıcı düzeltmelerini kaydederek otomatik öğrenme sistemine veri sağlar.
-- 🧠 **Şablon Alan İpuçları**: Yeni `TemplateLearningService`, kullanıcı geri bildirimlerinden alan tipi, düzenli ifade ve örnek değer ipuçları üretip `TemplateFieldHint` kayıtlarında saklar.
-- 🔁 **Çalışma Zamanı Entegrasyonu**: Öğrenilmiş ipuçları, hem tek belge analizinde hem de toplu işlemede `build_runtime_configuration` tarafından otomatik olarak yüklenir ve AI alan eşlemesine aktarılır.
+- 📄 **Yeni Hibrit OCR**: `OCREngine`, Tesseract ve EasyOCR arasında çalışma zamanında seçim yapar, kalite düştüğünde OpenAI Vision fallback'i devreye alır.
+- 🛡️ **Güvenlik Sertleştirmesi**: Hassas veriler LLM isteklerinden önce maskeleme kurallarıyla tokenize edilir, tüm kritik olaylar audit log tablosuna kaydedilir.
+- ⚖️ **GDPR Uyum Adımları**: Şablon ve toplu işlem verileri API üzerinden silinebilir, audit trail ile erişim izlenir ve veri maskeleme varsayılan olarak aktiftir.
 
 ## Teknoloji Stack
 
 ### Backend
 - **Framework**: Python 3.13, FastAPI
-- **OCR**: Tesseract (pytesseract)
+- **OCR**: Tesseract + EasyOCR (isteğe bağlı) ve kalite düşüşlerinde OpenAI Vision fallback
 - **Görüntü İşleme**: Pillow, OpenCV
 - **AI**: OPENAI_MODEL ortam değişkeniyle seçilen OpenAI sohbet modeli (varsayılan `gpt-4o`)
 - **Veritabanı**: SQLite (SQLAlchemy)
@@ -63,6 +64,9 @@ cp .env.example .env
 OPENAI_API_KEY=your_openai_api_key_here
 OPENAI_MODEL=gpt-4o
 TESSERACT_CMD=C:\Program Files\Tesseract-OCR\tesseract.exe  # Windows
+OCR_ENGINE=easyocr  # veya tesseract
+AI_VISION_MODEL=gpt-4o-mini
+DATA_MASKING_ENABLED=true
 ```
 
 ### 3. Backend Kurulumu
@@ -265,6 +269,14 @@ Backend'in `app/config.py` dosyasında `CORS_ORIGINS` listesine frontend URL'niz
 - Production'da güçlü CORS politikaları kullanın
 - API anahtarlarını güvenli saklayın
 - Dosya yükleme boyutlarını sınırlayın (varsayılan: 10MB)
+- LLM isteklerine gitmeden önce IBAN, TCKN, telefon ve e-posta gibi alanları otomatik olarak maskeleyin
+- Şablon, belge ve toplu işlem hareketleri için audit loglarını etkin tutun
+
+## GDPR Uyumluluğu
+
+- **Veri Minimizasyonu**: LLM çağrılarında kişisel veriler maskeleme token'larıyla korunur, yanıtlar geri çözümlenmeden önce denetlenebilir.
+- **Erişim ve Silme Hakkı**: Şablon ve toplu işlem kayıtları API üzerinden silinebilir, ilişkili belgeler de beraberinde kaldırılır.
+- **Şeffaflık**: Audit logları kullanıcı aksiyonlarını, kaynak tiplerini ve IP adreslerini kaydederek denetim izi sunar.
 
 ## Katkıda Bulunma
 
