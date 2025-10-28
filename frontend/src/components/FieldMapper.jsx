@@ -1,17 +1,19 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { toast } from 'react-toastify';
-import { saveTemplate } from '../api';
+import { saveTemplate, reanalyzeFields } from '../api';
 
 const FieldMapper = ({ data, onNext, onBack }) => {
   const [templateName, setTemplateName] = useState(data.templateName || 'Yeni Şablon');
   const [mappings, setMappings] = useState(() => data.analysisResult?.suggested_mapping || {});
   const [loading, setLoading] = useState(false);
+  const [reanalyzing, setReanalyzing] = useState(false);
+  const [reanalyzeSelection, setReanalyzeSelection] = useState({});
+  const [specialistMeta, setSpecialistMeta] = useState(data.analysisResult?.specialist || null);
   const analysisError = data.analysisResult?.error;
   const overallConfidence = data.analysisResult?.overall_confidence || 0;
   const analysisMessage = data.analysisResult?.message;
   const extractionSource = data.analysisResult?.extraction_source;
   const visionFallback = data.analysisResult?.vision_fallback;
-  const specialistInfo = data.analysisResult?.specialist;
   const normalizeFieldConfig = (field) => ({
     ...field,
     enabled: field?.enabled !== false,
@@ -65,10 +67,28 @@ const FieldMapper = ({ data, onNext, onBack }) => {
   }, [data.analysisResult?.suggested_mapping]);
 
   useEffect(() => {
+    if (data.analysisResult?.specialist) {
+      setSpecialistMeta(data.analysisResult.specialist);
+    }
+  }, [data.analysisResult?.specialist]);
+
+  useEffect(() => {
     if (data.templateName) {
       setTemplateName(data.templateName);
     }
   }, [data.templateName]);
+
+  useEffect(() => {
+    setReanalyzeSelection((prev) => {
+      const nextSelection = {};
+
+      Object.keys(mappings || {}).forEach((fieldName) => {
+        nextSelection[fieldName] = prev[fieldName] || false;
+      });
+
+      return nextSelection;
+    });
+  }, [mappings]);
 
   const activeFieldNames = useMemo(() => {
     return new Set(
@@ -77,6 +97,16 @@ const FieldMapper = ({ data, onNext, onBack }) => {
         .map(field => field.field_name)
     );
   }, [fieldConfigs]);
+
+  const selectedFields = useMemo(
+    () =>
+      Object.entries(reanalyzeSelection)
+        .filter(([fieldName, isSelected]) => isSelected && activeFieldNames.has(fieldName))
+        .map(([fieldName]) => fieldName),
+    [reanalyzeSelection, activeFieldNames]
+  );
+
+  const hasReanalyzeTargets = selectedFields.length > 0;
 
   const getStatusColor = (status) => {
     switch (status) {
@@ -212,6 +242,13 @@ const FieldMapper = ({ data, onNext, onBack }) => {
     });
   };
 
+  const handleReanalyzeToggle = (fieldName, isSelected) => {
+    setReanalyzeSelection((prev) => ({
+      ...prev,
+      [fieldName]: isSelected,
+    }));
+  };
+
   const handleSave = async () => {
     setLoading(true);
     const trimmedName = templateName.trim() || 'Yeni Şablon';
@@ -239,6 +276,75 @@ const FieldMapper = ({ data, onNext, onBack }) => {
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleReanalyze = async () => {
+    if (!data.documentId || !data.templateId) {
+      toast.error('Yeniden analiz için belge ve şablon bilgileri eksik.');
+      return;
+    }
+
+    if (selectedFields.length === 0) {
+      toast.warn('Lütfen yeniden analiz için en az bir alan seçin.');
+      return;
+    }
+
+    setReanalyzing(true);
+
+    try {
+      const currentMappingPayload = {};
+
+      selectedFields.forEach((fieldName) => {
+        if (mappings[fieldName]) {
+          currentMappingPayload[fieldName] = mappings[fieldName];
+        }
+      });
+
+      const response = await reanalyzeFields(
+        data.documentId,
+        data.templateId,
+        selectedFields,
+        currentMappingPayload,
+      );
+
+      if (response?.updated_fields) {
+        setMappings((prev) => {
+          const next = { ...prev };
+
+          Object.entries(response.updated_fields).forEach(([fieldName, update]) => {
+            const previous = prev[fieldName] || {};
+            next[fieldName] = {
+              ...previous,
+              ...update,
+            };
+          });
+
+          return next;
+        });
+      }
+
+      if (response?.specialist) {
+        setSpecialistMeta(response.specialist);
+      }
+
+      if (response?.message) {
+        toast.success(response.message);
+      } else {
+        toast.success('Seçili alanlar yeniden analiz edildi.');
+      }
+
+      setReanalyzeSelection((prev) => {
+        const next = { ...prev };
+        selectedFields.forEach((fieldName) => {
+          next[fieldName] = false;
+        });
+        return next;
+      });
+    } catch (error) {
+      toast.error('Yeniden analiz hatası: ' + (error.response?.data?.detail || error.message));
+    } finally {
+      setReanalyzing(false);
     }
   };
 
@@ -418,11 +524,35 @@ const FieldMapper = ({ data, onNext, onBack }) => {
               </p>
             </div>
           )}
-          {specialistInfo?.resolved_fields && specialistInfo.resolved_fields.length > 0 && (
+          {specialistMeta?.resolved_fields && specialistMeta.resolved_fields.length > 0 && (
             <div>
               <p className="text-xs uppercase tracking-wide text-gray-500">Uzman Modeli Alanları</p>
               <p className="text-sm text-gray-800 font-medium">
-                {specialistInfo.resolved_fields.join(', ')}
+                {specialistMeta.resolved_fields.join(', ')}
+              </p>
+            </div>
+          )}
+          {typeof specialistMeta?.latency_seconds === 'number' && (
+            <div>
+              <p className="text-xs uppercase tracking-wide text-gray-500">Uzman Yanıt Süresi</p>
+              <p className="text-sm text-gray-800 font-medium">
+                {specialistMeta.latency_seconds.toFixed(2)} sn
+              </p>
+            </div>
+          )}
+          {typeof specialistMeta?.estimated_cost === 'number' && (
+            <div>
+              <p className="text-xs uppercase tracking-wide text-gray-500">Tahmini Maliyet</p>
+              <p className="text-sm text-gray-800 font-medium">
+                ${specialistMeta.estimated_cost.toFixed(4)}
+              </p>
+            </div>
+          )}
+          {specialistMeta?.model?.model && (
+            <div>
+              <p className="text-xs uppercase tracking-wide text-gray-500">Uzman Model</p>
+              <p className="text-sm text-gray-800 font-medium">
+                {specialistMeta.model.model}
               </p>
             </div>
           )}
@@ -435,6 +565,11 @@ const FieldMapper = ({ data, onNext, onBack }) => {
                 <li key={reason}>{reason}</li>
               ))}
             </ul>
+          </div>
+        )}
+        {specialistMeta?.error && (
+          <div className="mt-3 rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            Uzman modeli uyarısı: {specialistMeta.error}
           </div>
         )}
       </div>
@@ -498,6 +633,7 @@ const FieldMapper = ({ data, onNext, onBack }) => {
                 <th className="text-left py-3 px-4">Çıkarılan Değer</th>
                 <th className="text-left py-3 px-4">Güven Skoru</th>
                 <th className="text-left py-3 px-4">Durum</th>
+                <th className="text-left py-3 px-4">İleri Analiz</th>
               </tr>
             </thead>
             <tbody>
@@ -619,6 +755,18 @@ const FieldMapper = ({ data, onNext, onBack }) => {
                       {getStatusIcon(fieldData.status)} {fieldData.status === 'high' ? 'Yüksek' : fieldData.status === 'medium' ? 'Orta' : 'Düşük'}
                     </span>
                   </td>
+                  <td className="py-3 px-4 align-top">
+                    <label className="flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        className="rounded"
+                        checked={Boolean(reanalyzeSelection[fieldName])}
+                        onChange={(e) => handleReanalyzeToggle(fieldName, e.target.checked)}
+                        disabled={!activeFieldNames.has(fieldName) || reanalyzing}
+                      />
+                      <span>Seç</span>
+                    </label>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -650,10 +798,23 @@ const FieldMapper = ({ data, onNext, onBack }) => {
 
       {/* Actions */}
       <div className="flex gap-3">
-        <button onClick={onBack} className="btn btn-secondary flex-1" disabled={loading}>
+        <button onClick={onBack} className="btn btn-secondary flex-1" disabled={loading || reanalyzing}>
           Geri
         </button>
-        <button onClick={handleSave} className="btn btn-primary flex-1" disabled={loading}>
+        <button
+          onClick={handleReanalyze}
+          className="flex-1 rounded-lg border border-primary-500 px-4 py-2 font-semibold text-primary-600 transition hover:bg-primary-50 disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:bg-primary-50/0"
+          disabled={
+            reanalyzing ||
+            loading ||
+            !hasReanalyzeTargets ||
+            !data.documentId ||
+            !data.templateId
+          }
+        >
+          {reanalyzing ? 'Yeniden Analiz Ediliyor...' : 'Yeniden Analiz Et'}
+        </button>
+        <button onClick={handleSave} className="btn btn-primary flex-1" disabled={loading || reanalyzing}>
           {loading ? 'Kaydediliyor...' : 'Şablonu Kaydet'}
         </button>
       </div>

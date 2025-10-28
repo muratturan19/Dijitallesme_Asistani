@@ -48,12 +48,32 @@ def determine_specialist_candidates(
     *,
     low_confidence_floor: float,
     allowed_tiers: Iterable[str],
+    requested_fields: Optional[Iterable[str]] = None,
 ) -> FieldConfigMap:
     """Return field definitions that should be routed to the specialist model."""
 
     tier_set = {tier.strip().lower() for tier in allowed_tiers if tier}
     candidates: FieldConfigMap = {}
     normalized_fields: Dict[str, Dict[str, Any]] = {}
+    requested_order: Optional[List[str]] = None
+    requested_set: Optional[Set[str]] = None
+
+    if requested_fields is not None:
+        requested_order = []
+        requested_set = set()
+
+        for field_name in requested_fields:
+            normalized = str(field_name).strip()
+            if not normalized:
+                continue
+            if normalized in requested_set:
+                continue
+            requested_order.append(normalized)
+            requested_set.add(normalized)
+
+        if not requested_order:
+            requested_order = []
+            requested_set = set()
 
     for field in template_fields or []:
         if not isinstance(field, dict):
@@ -62,6 +82,9 @@ def determine_specialist_candidates(
         if not name:
             continue
         normalized_fields[name] = field
+
+        if requested_set is not None and name not in requested_set:
+            continue
 
         tier = str(field.get("llm_tier", "standard")).strip().lower() or "standard"
         handwriting_flag = bool(field.get("auto_detected_handwriting"))
@@ -85,9 +108,24 @@ def determine_specialist_candidates(
             threshold_value = low_confidence_floor
 
         if confidence < threshold_value:
+            if requested_set is not None and field_name not in requested_set:
+                continue
+
             field_def = normalized_fields.get(field_name)
             if field_def:
                 candidates[field_name] = field_def
+
+    if requested_set is not None and requested_order is not None:
+        filtered: FieldConfigMap = {}
+
+        for field_name in requested_order:
+            field_def = normalized_fields.get(field_name)
+            if not field_def:
+                continue
+
+            filtered[field_name] = candidates.get(field_name, field_def)
+
+        return filtered
 
     return candidates
 
@@ -109,6 +147,7 @@ def merge_field_mappings(
             "confidence": float(payload.get("confidence", 0.0) or 0.0),
             "source": payload.get("source", "llm-primary"),
             "evidence": payload.get("evidence"),
+            "notes": payload.get("notes"),
         }
 
     for field_name, payload in (specialist_mapping or {}).items():
@@ -126,6 +165,7 @@ def merge_field_mappings(
                 "confidence": specialist_conf,
                 "source": specialist_source,
                 "evidence": payload.get("evidence"),
+                "notes": payload.get("notes"),
             }
             if existing:
                 alternates = existing.get("alternates") or []

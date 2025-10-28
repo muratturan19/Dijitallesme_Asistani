@@ -8,7 +8,7 @@ from ..config import settings
 from ..database import get_db, Template, Document
 from ..models import (
     TemplateCreate, TemplateResponse, AnalyzeRequest,
-    SaveTemplateRequest, TestTemplateRequest, TemplateFieldsUpdate
+    ReanalyzeRequest, SaveTemplateRequest, TestTemplateRequest, TemplateFieldsUpdate
 )
 from ..core.template_manager import TemplateManager, TemplateNameConflictError
 from ..core.image_processor import ImageProcessor
@@ -298,6 +298,8 @@ async def analyze_document(
             }
             if field_data.get('alternates'):
                 entry['alternates'] = field_data['alternates']
+            if field_data.get('notes'):
+                entry['notes'] = field_data['notes']
 
             suggested_mapping[field_name] = entry
 
@@ -395,6 +397,340 @@ async def analyze_document(
             document.status = "failed"
             db.commit()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/reanalyze", response_model=Dict[str, Any])
+async def reanalyze_fields(
+    request: ReanalyzeRequest,
+    db: Session = Depends(get_db)
+):
+    """Re-run the handwriting specialist on a subset of template fields."""
+
+    try:
+        sanitized_fields = [
+            field_name.strip()
+            for field_name in request.fields
+            if isinstance(field_name, str) and field_name.strip()
+        ]
+
+        if not sanitized_fields:
+            raise HTTPException(
+                status_code=400,
+                detail="En az bir geçerli alan adı belirtmelisiniz",
+            )
+
+        document = db.query(Document).filter(
+            Document.id == request.document_id
+        ).first()
+
+        if not document:
+            raise HTTPException(status_code=404, detail="Belge bulunamadı")
+
+        template = db.query(Template).filter(
+            Template.id == request.template_id
+        ).first()
+
+        if not template:
+            raise HTTPException(status_code=404, detail="Şablon bulunamadı")
+
+        template_fields: List[Dict[str, Any]] = template.target_fields or []
+        template_field_map: Dict[str, Dict[str, Any]] = {
+            str(field.get('field_name')).strip(): field
+            for field in template_fields
+            if isinstance(field, dict) and str(field.get('field_name')).strip()
+        }
+
+        missing_fields = sorted(
+            field_name
+            for field_name in sanitized_fields
+            if field_name not in template_field_map
+        )
+
+        valid_fields = [
+            field_name
+            for field_name in sanitized_fields
+            if field_name in template_field_map
+        ]
+
+        if not valid_fields:
+            raise HTTPException(
+                status_code=400,
+                detail="Seçilen alanlar mevcut şablonda bulunamadı",
+            )
+
+        learning_service = TemplateLearningService(db)
+        learned_hints = learning_service.load_learned_hints(template.id)
+
+        runtime_config = build_runtime_configuration(
+            template.extraction_rules,
+            settings.TESSERACT_LANG,
+            learned_hints=learned_hints or None,
+        )
+
+        image_processor = ImageProcessor(settings.TEMP_DIR)
+        processed_document = image_processor.process_file(
+            document.file_path,
+            profile=runtime_config['preprocessing_profile'],
+        )
+
+        if not processed_document:
+            raise HTTPException(
+                status_code=500,
+                detail="Resim işleme hatası",
+            )
+
+        ocr_component = getattr(runtime_config['rules'], 'ocr', None)
+        ocr_cmd = getattr(ocr_component, 'tesseract_cmd', None) if ocr_component else None
+        ocr_engine = OCREngine(
+            ocr_cmd or settings.TESSERACT_CMD,
+            runtime_config['language'],
+        )
+
+        if processed_document.text:
+            cleaned_text = processed_document.text.strip()
+            word_count = len(cleaned_text.split()) if cleaned_text else 0
+            ocr_result: Dict[str, Any] = {
+                'text': cleaned_text,
+                'words_with_bbox': [],
+                'confidence_scores': {},
+                'average_confidence': 1.0,
+                'word_count': word_count,
+                'source': 'text-layer',
+            }
+        else:
+            ocr_source_path = (
+                processed_document.image_path
+                or getattr(processed_document, 'original_image_path', None)
+            )
+
+            if not ocr_source_path:
+                raise HTTPException(
+                    status_code=500,
+                    detail="OCR için görüntü yolu bulunamadı",
+                )
+
+            ocr_result = ocr_engine.extract_text(
+                ocr_source_path,
+                options=runtime_config['ocr_options'],
+            )
+            ocr_result['source'] = 'ocr'
+            cleaned_text = (ocr_result.get('text') or '').strip()
+            word_count = len(cleaned_text.split()) if cleaned_text else 0
+            ocr_result['text'] = cleaned_text
+            ocr_result['word_count'] = word_count
+
+        if not ocr_result or not ocr_result.get('text'):
+            raise HTTPException(
+                status_code=500,
+                detail="OCR hatası - metin çıkarılamadı",
+            )
+
+        field_rules = runtime_config['field_rules'] or {}
+        selected_rules = {
+            name: rules
+            for name, rules in field_rules.items()
+            if name in valid_fields
+        }
+
+        if selected_rules:
+            field_level_results = run_field_level_ocr(
+                image_processor,
+                ocr_engine,
+                processed_document,
+                document.file_path,
+                selected_rules,
+            )
+            if field_level_results:
+                existing_results = ocr_result.setdefault('field_results', {})
+                existing_results.update(field_level_results)
+
+        field_hints = runtime_config['field_hints'] or {}
+        relevant_hints = {
+            name: hint
+            for name, hint in field_hints.items()
+            if name in valid_fields
+        }
+
+        def _normalize_primary_mapping(
+            raw_mapping: Optional[Dict[str, Any]],
+            allowed: List[str],
+        ) -> Dict[str, Dict[str, Any]]:
+            normalized: Dict[str, Dict[str, Any]] = {}
+
+            if not isinstance(raw_mapping, dict):
+                return normalized
+
+            for field_name in allowed:
+                payload = raw_mapping.get(field_name)
+                if not isinstance(payload, dict):
+                    continue
+
+                try:
+                    confidence_value = float(payload.get('confidence', 0.0) or 0.0)
+                except (TypeError, ValueError):
+                    confidence_value = 0.0
+
+                entry: Dict[str, Any] = {
+                    'value': payload.get('value'),
+                    'confidence': confidence_value,
+                    'source': payload.get('source') or payload.get('origin') or 'user-mapping',
+                }
+
+                if payload.get('evidence') is not None:
+                    entry['evidence'] = payload.get('evidence')
+                if payload.get('notes'):
+                    entry['notes'] = payload.get('notes')
+
+                normalized[field_name] = entry
+
+            return normalized
+
+        primary_mapping = _normalize_primary_mapping(
+            request.current_mapping,
+            valid_fields,
+        )
+
+        candidate_configs = determine_specialist_candidates(
+            template_fields,
+            primary_mapping,
+            low_confidence_floor=settings.AI_HANDWRITING_LOW_CONFIDENCE_THRESHOLD,
+            allowed_tiers=settings.AI_HANDWRITING_TIERS,
+            requested_fields=valid_fields,
+        )
+
+        if not candidate_configs:
+            operation_metadata = {
+                'operation': 'reanalyze',
+                'document_id': document.id,
+                'template_id': template.id,
+                'requested_fields': sanitized_fields,
+                'processed_fields': [],
+                'resolved_fields': [],
+                'missing_fields': missing_fields,
+                'ocr_source': ocr_result.get('source', 'unknown'),
+                'word_count': ocr_result.get('word_count', 0),
+            }
+
+            return {
+                'updated_fields': {},
+                'message': 'Seçilen alanlar uzman modele yönlendirilemedi.',
+                'specialist': {
+                    'requested_fields': sanitized_fields,
+                    'resolved_fields': [],
+                    'missing_fields': missing_fields,
+                },
+                'operation': operation_metadata,
+            }
+
+        interpreter = HandwritingInterpreter(settings.OPENAI_API_KEY)
+        specialist_response = interpreter.interpret_fields(
+            ocr_result,
+            candidate_configs,
+            primary_mapping,
+            field_hints=relevant_hints or None,
+            document_info={
+                'document_id': document.id,
+                'template_id': template.id,
+                'operation': 'reanalyze',
+            },
+        )
+
+        specialist_mapping = specialist_response.get('field_mappings') or {}
+
+        merged_mappings = merge_field_mappings(
+            primary_mapping,
+            specialist_mapping,
+        )
+
+        def _calculate_status(confidence: float) -> str:
+            if confidence >= 0.8:
+                return 'high'
+            if confidence >= 0.5:
+                return 'medium'
+            return 'low'
+
+        field_updates: Dict[str, Dict[str, Any]] = {}
+        for field_name in valid_fields:
+            merged_entry = merged_mappings.get(field_name)
+            if not merged_entry:
+                continue
+
+            confidence_value = float(merged_entry.get('confidence', 0.0) or 0.0)
+            update: Dict[str, Any] = {
+                'value': merged_entry.get('value'),
+                'confidence': confidence_value,
+                'status': _calculate_status(confidence_value),
+                'source': merged_entry.get('source', ''),
+            }
+            if merged_entry.get('alternates'):
+                update['alternates'] = merged_entry['alternates']
+            if merged_entry.get('notes'):
+                update['notes'] = merged_entry['notes']
+
+            field_updates[field_name] = update
+
+        latency_seconds = specialist_response.get('latency_seconds')
+        estimated_cost = specialist_response.get('estimated_cost')
+        specialist_usage = specialist_response.get('usage')
+        specialist_error = specialist_response.get('error')
+        specialist_model = specialist_response.get('model_metadata')
+
+        unresolved_fields = [
+            field_name
+            for field_name in valid_fields
+            if field_name not in specialist_mapping
+        ]
+
+        operation_metadata = {
+            'operation': 'reanalyze',
+            'document_id': document.id,
+            'template_id': template.id,
+            'requested_fields': sanitized_fields,
+            'processed_fields': sorted(candidate_configs.keys()),
+            'resolved_fields': sorted(specialist_mapping.keys()),
+            'unresolved_fields': unresolved_fields,
+            'missing_fields': missing_fields,
+            'ocr_source': ocr_result.get('source', 'unknown'),
+            'word_count': ocr_result.get('word_count', 0),
+            'latency_seconds': latency_seconds,
+        }
+
+        specialist_info: Dict[str, Any] = {
+            'requested_fields': sanitized_fields,
+            'resolved_fields': sorted(specialist_mapping.keys()),
+            'usage': specialist_usage,
+            'latency_seconds': latency_seconds,
+            'estimated_cost': estimated_cost,
+            'error': specialist_error,
+        }
+
+        if unresolved_fields:
+            specialist_info['unresolved_fields'] = unresolved_fields
+        if missing_fields:
+            specialist_info['missing_fields'] = missing_fields
+        if specialist_model:
+            specialist_info['model'] = specialist_model
+
+        message: str
+        if specialist_error:
+            message = f"Uzman modeli hatası: {specialist_error}"
+        elif field_updates:
+            message = f"{len(field_updates)} alan yeniden analiz edildi."
+        else:
+            message = "Uzman modeli yeni bir sonuç üretmedi."
+
+        return {
+            'updated_fields': field_updates,
+            'message': message,
+            'specialist': specialist_info,
+            'operation': operation_metadata,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logger.exception("Yeniden analiz işlemi başarısız oldu: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @router.post("/save", response_model=Dict[str, Any])
