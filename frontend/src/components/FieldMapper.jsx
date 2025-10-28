@@ -100,6 +100,91 @@ const FieldMapper = ({ data, onNext, onBack }) => {
     }
   };
 
+  const formatRuleKey = (key) => {
+    if (!key) {
+      return 'Diğer';
+    }
+
+    return key
+      .replace(/_/g, ' ')
+      .replace(/\b\w/g, (char) => char.toUpperCase());
+  };
+
+  const renderRuleValue = (value, depth = 0) => {
+    if (value === null || value === undefined) {
+      return <span className="text-gray-500">-</span>;
+    }
+
+    if (typeof value === 'string') {
+      return (
+        <pre className="whitespace-pre-wrap break-words bg-white border border-gray-200 rounded-md p-3 text-sm text-gray-700 font-mono">
+          {value}
+        </pre>
+      );
+    }
+
+    if (typeof value === 'number' || typeof value === 'boolean') {
+      return (
+        <span className="inline-flex items-center bg-white border border-gray-200 rounded px-2 py-1 text-sm text-gray-700">
+          {String(value)}
+        </span>
+      );
+    }
+
+    if (Array.isArray(value)) {
+      if (value.length === 0) {
+        return <span className="text-gray-500">-</span>;
+      }
+
+      return (
+        <ul className="space-y-2">
+          {value.map((item, index) => (
+            <li key={index} className="border-l-2 border-blue-200 pl-3">
+              {renderRuleValue(item, depth + 1)}
+            </li>
+          ))}
+        </ul>
+      );
+    }
+
+    if (typeof value === 'object') {
+      const entries = Object.entries(value);
+
+      if (entries.length === 0) {
+        return <span className="text-gray-500">-</span>;
+      }
+
+      return (
+        <div className="space-y-3">
+          {entries.map(([childKey, childValue]) => (
+            <div key={childKey} className="border-l-2 border-gray-200 pl-3">
+              <div className="text-xs font-semibold tracking-wide text-gray-500 uppercase mb-1">
+                {formatRuleKey(childKey)}
+              </div>
+              <div className="text-sm text-gray-700 space-y-2">
+                {renderRuleValue(childValue, depth + 1)}
+              </div>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    return <span className="text-gray-500">-</span>;
+  };
+
+  const appliedRules = useMemo(() => {
+    const rules = data.analysisResult?.applied_rules;
+
+    if (!rules || typeof rules !== 'object' || Array.isArray(rules)) {
+      return null;
+    }
+
+    const entries = Object.entries(rules).filter(([, value]) => value !== null && value !== undefined);
+
+    return entries.length > 0 ? entries : null;
+  }, [data.analysisResult?.applied_rules]);
+
   const getTextareaRows = (value) => {
     if (!value) {
       return 3;
@@ -258,6 +343,27 @@ const FieldMapper = ({ data, onNext, onBack }) => {
           Toplam {data.analysisResult.word_count} kelime bulundu
         </p>
       </div>
+
+      {appliedRules && (
+        <div className="card mb-6">
+          <h3 className="font-semibold mb-2">Yapılan İşlemler</h3>
+          <p className="text-sm text-gray-600 mb-4">
+            Analiz sırasında uygulanan kuralların ve yapılan işlemlerin detayları.
+          </p>
+          <div className="space-y-3">
+            {appliedRules.map(([ruleKey, ruleValue]) => (
+              <details key={ruleKey} open className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                <summary className="cursor-pointer text-sm font-semibold text-gray-700">
+                  {formatRuleKey(ruleKey)}
+                </summary>
+                <div className="mt-3 text-sm text-gray-700 space-y-2">
+                  {renderRuleValue(ruleValue)}
+                </div>
+              </details>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Field Mappings */}
       <div className="card mb-6">
