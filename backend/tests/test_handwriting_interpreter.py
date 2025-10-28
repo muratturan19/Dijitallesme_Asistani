@@ -87,6 +87,27 @@ def test_merge_field_mappings_prefers_highest_confidence_and_tracks_alternates()
     assert merged['signature']['value'] == 'Ada Lovelace'
 
 
+def test_requested_fields_force_specialist_selection_even_when_confident() -> None:
+    template_fields = [
+        {'field_name': 'invoice_no', 'llm_tier': 'standard'},
+        {'field_name': 'signature', 'llm_tier': 'standard'},
+    ]
+    primary_mapping = {
+        'invoice_no': {'confidence': 0.95},
+        'signature': {'confidence': 0.97},
+    }
+
+    candidates = determine_specialist_candidates(
+        template_fields,
+        primary_mapping,
+        low_confidence_floor=0.6,
+        allowed_tiers=('handwriting',),
+        requested_fields=('signature',),
+    )
+
+    assert list(candidates.keys()) == ['signature']
+
+
 def test_handwriting_prompt_includes_field_level_context() -> None:
     interpreter = HandwritingInterpreter(
         api_key="dummy",

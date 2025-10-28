@@ -436,6 +436,13 @@ class AnalyzeRequest(BaseModel):
     template_id: int
 
 
+class ReanalyzeRequest(BaseModel):
+    document_id: int
+    template_id: int
+    fields: List[str] = Field(..., min_items=1)
+    current_mapping: Optional[Dict[str, Dict[str, Any]]] = Field(default_factory=dict)
+
+
 class AnalyzeResponse(BaseModel):
     suggested_mapping: Dict[str, Dict[str, Any]]
     ocr_text: str

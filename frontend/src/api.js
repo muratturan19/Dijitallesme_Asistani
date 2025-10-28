@@ -199,6 +199,17 @@ export const saveTemplate = async (templateId, name, confirmedMapping, targetFie
   return response.data;
 };
 
+export const reanalyzeFields = async (documentId, templateId, fields, currentMapping) => {
+  const response = await api.post('/api/template/reanalyze', {
+    document_id: documentId,
+    template_id: templateId,
+    fields,
+    current_mapping: currentMapping,
+  });
+
+  return response.data;
+};
+
 export const updateTemplateFields = async (templateId, targetFields, name) => {
   const payload = {
     target_fields: prepareTargetFields(targetFields),
