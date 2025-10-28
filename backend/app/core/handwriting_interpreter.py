@@ -439,6 +439,17 @@ class HandwritingInterpreter:
                     if temperature is not None:
                         request_kwargs["temperature"] = temperature
                     response = self._client.chat.completions.create(**request_kwargs)
+                logger.debug("Uzman modeli ham yanıt türü: %s", type(response))
+                if hasattr(response, "model_dump_json"):
+                    try:
+                        logger.debug(
+                            "Uzman modeli ham yanıt (model_dump_json): %s",
+                            response.model_dump_json(),
+                        )
+                    except Exception:  # pragma: no cover - diagnostic path
+                        logger.debug("Uzman modeli ham yanıt (repr): %r", response)
+                else:
+                    logger.debug("Uzman modeli ham yanıt (repr): %r", response)
                 response_payload.update(
                     self._parse_openai_response(response, masker)
                 )
@@ -825,6 +836,10 @@ class HandwritingInterpreter:
             raw_content = content
 
         if not content:
+            logger.debug(
+                "Uzman modeli yanıtı içerik sağlamadı: attributes=%s",
+                sorted(dir(response)),
+            )
             return {"field_mappings": {}, "error": "Specialist model returned no content."}
 
         if masker is not None:
