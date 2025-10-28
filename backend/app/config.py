@@ -52,7 +52,7 @@ class Settings:
     )
     AI_HANDWRITING_TEMPERATURE: float = _get_env_float(
         "AI_HANDWRITING_TEMPERATURE", 0.3
-    )  # top_p'ye çevrilir (reasoning için)
+    )  # Responses API top_p desteklemediği için yalnızca referans amaçlıdır
     AI_HANDWRITING_CONTEXT_WINDOW: int = _get_env_int(
         "AI_HANDWRITING_CONTEXT_WINDOW", 4000
     )  # reasoning modellerinde max_output_tokens olarak kullanılır

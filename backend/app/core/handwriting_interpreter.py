@@ -159,7 +159,6 @@ class HandwritingInterpreter:
         context_window: Optional[int] = None,
         reasoning_extra_kwargs: Optional[Dict[str, Any]] = None,
         reasoning_effort: Optional[str] = None,
-        apply_reasoning_temperature: bool = True,
     ) -> None:
         self.api_key = api_key
         self.model = model or settings.AI_HANDWRITING_MODEL
@@ -177,11 +176,6 @@ class HandwritingInterpreter:
             else reasoning_effort
         )
         base_extra_kwargs: Dict[str, Any] = dict(reasoning_extra_kwargs or {})
-        top_p_value = self._temperature_to_top_p(
-            self.temperature if apply_reasoning_temperature else None
-        )
-        if top_p_value is not None and "top_p" not in base_extra_kwargs:
-            base_extra_kwargs["top_p"] = top_p_value
         self.reasoning_extra_kwargs = base_extra_kwargs
 
         self._has_valid_api_key = bool(api_key and api_key.strip())
@@ -372,13 +366,12 @@ class HandwritingInterpreter:
         try:
             if self._client is not None:  # pragma: no cover - requires modern SDK
                 if is_reasoning_model:
-                    extra_kwargs = dict(self.reasoning_extra_kwargs)
-                    if self.context_window:
-                        extra_kwargs.setdefault(
-                            "max_output_tokens", self.context_window
-                        )
-                    applied_extra_kwargs = dict(extra_kwargs)
-                    extra_kwargs_param = extra_kwargs or None
+                    extra_kwargs = self._prepare_reasoning_extra_kwargs(
+                        self.reasoning_extra_kwargs,
+                        self.context_window,
+                    )
+                    applied_extra_kwargs = dict(extra_kwargs) if extra_kwargs else None
+                    extra_kwargs_param = applied_extra_kwargs
                     response = call_reasoning_model(
                         self._client,
                         model=self.model,
@@ -442,24 +435,6 @@ class HandwritingInterpreter:
 
         return response_payload
 
-    @staticmethod
-    def _temperature_to_top_p(value: Optional[float]) -> Optional[float]:
-        """Map temperature-style values to a top_p heuristic for reasoning models."""
-
-        if value is None:
-            return None
-
-        try:
-            numeric = float(value)
-        except (TypeError, ValueError):
-            return None
-
-        if numeric <= 0:
-            return 0.01
-        if numeric >= 1:
-            return 1.0
-        return round(numeric, 3)
-
     def _build_model_metadata(
         self,
         *,
@@ -485,6 +460,34 @@ class HandwritingInterpreter:
             metadata["reasoning_parameters"] = dict(reasoning_parameters)
 
         return metadata
+
+    @staticmethod
+    def _prepare_reasoning_extra_kwargs(
+        base_kwargs: Optional[Dict[str, Any]],
+        context_window: Optional[int],
+    ) -> Dict[str, Any]:
+        """Return sanitized kwargs that are safe to forward to Responses API."""
+
+        prepared: Dict[str, Any] = {}
+        if base_kwargs:
+            prepared.update(base_kwargs)
+
+        removed_keys: List[str] = []
+        for key in list(prepared):
+            if key in {"top_p"}:
+                prepared.pop(key, None)
+                removed_keys.append(key)
+
+        if removed_keys:
+            logger.debug(
+                "Reasoning modeli desteklemediği için parametreler yok sayıldı: %s",
+                ", ".join(sorted(removed_keys)),
+            )
+
+        if context_window:
+            prepared.setdefault("max_output_tokens", context_window)
+
+        return prepared
 
     @staticmethod
     def _safe_float(value: Any) -> Optional[float]:

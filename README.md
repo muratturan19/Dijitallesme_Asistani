@@ -202,13 +202,14 @@ Backend çalışırken Swagger UI'ye erişin:
 
 Uygulama, birincil alan eşlemesi için `AI_PRIMARY_MODEL` (varsayılan `gpt-4o`) ve el
 yazısı odaklı düzeltmeler için ikinci bir LLM (LLM2) kullanır. Uzman model varsayılan
-olarak `gpt-5` seçilidir ve Responses API üzerinden çalışırken sıcaklık
-değerinizi `top_p` parametresine map eder. Aşağıdaki ortam değişkenleri ile LLM2'yi
+olarak `gpt-5` seçilidir ve Responses API üzerinden çağrılır. OpenAI'nin mevcut
+Responses modelleri `top_p` parametresini desteklemediğinden, sıcaklık değeri yalnızca
+referans amaçlı tutulur. Aşağıdaki ortam değişkenleri ile LLM2'yi
 özelleştirebilirsiniz:
 
 - `AI_HANDWRITING_MODEL`: Uzman model adı (`gpt-5` varsayılan).
-- `AI_HANDWRITING_TEMPERATURE`: Responses API çağrılarında `top_p` olarak uygulanan
-  yaratıcı odaklı sıcaklık.
+- `AI_HANDWRITING_TEMPERATURE`: Responses API `top_p` desteği olmadığı için yalnızca
+  metadata amaçlı saklanan sıcaklık değeri.
 - `AI_HANDWRITING_CONTEXT_WINDOW`: Uzmanın alabileceği maksimum çıktı token sayısı.
 - `AI_HANDWRITING_REASONING_EFFORT`: Responses API `reasoning.effort` değeri (`high`
   varsayılan).
