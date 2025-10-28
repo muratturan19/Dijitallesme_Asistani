@@ -15,6 +15,7 @@ const WelcomeWizard = ({ onComplete }) => {
   const [sampleDoc, setSampleDoc] = useState(null);
   const [templateFile, setTemplateFile] = useState(null);
   const [documentId, setDocumentId] = useState(null);
+  const [documentPreviewUrl, setDocumentPreviewUrl] = useState(null);
   const [templateId, setTemplateId] = useState(null);
   const [templateFields, setTemplateFields] = useState([]);
   const [templateName, setTemplateName] = useState('Yeni Şablon');
@@ -154,6 +155,7 @@ const WelcomeWizard = ({ onComplete }) => {
     try {
       const result = await uploadSampleDocument(file);
       setDocumentId(result.document_id);
+      setDocumentPreviewUrl(result.preview_url || null);
       toast.success('Örnek belge yüklendi!');
     } catch (error) {
       toast.error('Belge yükleme hatası: ' + (error.response?.data?.detail || error.message));
@@ -236,6 +238,7 @@ const WelcomeWizard = ({ onComplete }) => {
         templateId,
         templateFields: normalizedFields,
         templateName,
+        documentPreviewUrl,
         analysisResult: result,
       });
     } catch (error) {

@@ -8,6 +8,10 @@ const FieldMapper = ({ data, onNext, onBack }) => {
   const [loading, setLoading] = useState(false);
   const analysisError = data.analysisResult?.error;
   const overallConfidence = data.analysisResult?.overall_confidence || 0;
+  const analysisMessage = data.analysisResult?.message;
+  const extractionSource = data.analysisResult?.extraction_source;
+  const visionFallback = data.analysisResult?.vision_fallback;
+  const specialistInfo = data.analysisResult?.specialist;
   const normalizeFieldConfig = (field) => ({
     ...field,
     enabled: field?.enabled !== false,
@@ -309,6 +313,38 @@ const FieldMapper = ({ data, onNext, onBack }) => {
     });
   }, [mappings]);
 
+  const isPdfPreview = data.documentPreviewUrl
+    ? data.documentPreviewUrl.toLowerCase().endsWith('.pdf')
+    : false;
+
+  const getExtractionSourceLabel = () => {
+    if (!extractionSource) {
+      return 'Bilinmiyor';
+    }
+
+    if (extractionSource === 'text-layer') {
+      return 'PDF Metin Katmanı';
+    }
+
+    if (extractionSource === 'ocr') {
+      return 'OCR (Tesseract)';
+    }
+
+    return extractionSource;
+  };
+
+  const renderVisionFallbackStatus = () => {
+    if (!visionFallback) {
+      return 'Bilgi yok';
+    }
+
+    if (visionFallback.triggered) {
+      return 'LLM Vision fallback devrede';
+    }
+
+    return 'Görsel analiz gerektirmedi';
+  };
+
   return (
     <div className="max-w-6xl mx-auto p-6">
       <h1 className="text-3xl font-bold text-gray-800 mb-2">Alan Eşleştirme</h1>
@@ -333,15 +369,91 @@ const FieldMapper = ({ data, onNext, onBack }) => {
         />
       </div>
 
+      {/* Document Preview */}
+      {data.documentPreviewUrl && (
+        <div className="card mb-6">
+          <h3 className="font-semibold mb-3">Belge Önizlemesi</h3>
+          <div className="border border-gray-200 rounded-lg overflow-hidden bg-gray-50">
+            {isPdfPreview ? (
+              <iframe
+                src={data.documentPreviewUrl}
+                title="Belge PDF önizlemesi"
+                className="w-full h-[600px]"
+              />
+            ) : (
+              <img
+                src={data.documentPreviewUrl}
+                alt="Yüklenen belgenin önizlemesi"
+                className="w-full max-h-[700px] object-contain bg-white"
+                loading="lazy"
+              />
+            )}
+          </div>
+          <p className="text-xs text-gray-500 mt-2">
+            Bu önizleme AI eşleme sürecinde kullanılan belgeyi gösterir. Görüntülenmiyorsa tarayıcı engellemelerini kontrol edin.
+          </p>
+        </div>
+      )}
+
+      {/* Analysis Summary */}
+      <div className="card mb-6">
+        <h3 className="font-semibold mb-3">AI Analiz Özeti</h3>
+        {analysisMessage && (
+          <p className="text-sm text-gray-700 mb-3">{analysisMessage}</p>
+        )}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <p className="text-xs uppercase tracking-wide text-gray-500">Veri Kaynağı</p>
+            <p className="text-sm text-gray-800 font-medium">{getExtractionSourceLabel()}</p>
+          </div>
+          <div>
+            <p className="text-xs uppercase tracking-wide text-gray-500">Vision Durumu</p>
+            <p className="text-sm text-gray-800 font-medium">{renderVisionFallbackStatus()}</p>
+          </div>
+          {visionFallback?.quality_score !== undefined && (
+            <div>
+              <p className="text-xs uppercase tracking-wide text-gray-500">Görsel Kalite Skoru</p>
+              <p className="text-sm text-gray-800 font-medium">
+                {visionFallback.quality_score.toFixed(2)}
+              </p>
+            </div>
+          )}
+          {specialistInfo?.resolved_fields && specialistInfo.resolved_fields.length > 0 && (
+            <div>
+              <p className="text-xs uppercase tracking-wide text-gray-500">Uzman Modeli Alanları</p>
+              <p className="text-sm text-gray-800 font-medium">
+                {specialistInfo.resolved_fields.join(', ')}
+              </p>
+            </div>
+          )}
+        </div>
+        {Array.isArray(visionFallback?.reasons) && visionFallback.reasons.length > 0 && (
+          <div className="mt-3">
+            <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">Vision Kararı Gerekçeleri</p>
+            <ul className="list-disc list-inside text-xs text-gray-600 space-y-1">
+              {visionFallback.reasons.map((reason) => (
+                <li key={reason}>{reason}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+
       {/* OCR Text Preview */}
       <div className="card mb-6">
         <h3 className="font-semibold mb-2">OCR Metni (Önizleme)</h3>
         <div className="bg-gray-50 p-4 rounded max-h-40 overflow-y-auto text-sm">
-          {data.analysisResult.ocr_text.substring(0, 500)}...
+          {data.analysisResult?.ocr_text
+            ? `${data.analysisResult.ocr_text.substring(0, 500)}${
+                data.analysisResult.ocr_text.length > 500 ? '...' : ''
+              }`
+            : 'OCR metni mevcut değil'}
         </div>
-        <p className="text-xs text-gray-500 mt-2">
-          Toplam {data.analysisResult.word_count} kelime bulundu
-        </p>
+        {typeof data.analysisResult?.word_count === 'number' && (
+          <p className="text-xs text-gray-500 mt-2">
+            Toplam {data.analysisResult.word_count} kelime bulundu
+          </p>
+        )}
       </div>
 
       {appliedRules && (
@@ -396,8 +508,8 @@ const FieldMapper = ({ data, onNext, onBack }) => {
                     activeFieldNames.has(fieldName) ? '' : 'opacity-60'
                   }`}
                 >
-                  <td className="py-3 px-4 font-medium align-top">{fieldName}</td>
-                  <td className="py-3 px-4 text-sm align-top">
+                  <td className="py-3 px-4 font-medium align-top min-w-[180px]">{fieldName}</td>
+                  <td className="py-3 px-4 text-sm align-top min-w-[220px]">
                     {(() => {
                       const fieldConfig = fieldConfigs.find(
                         field => field.field_name === fieldName
@@ -452,7 +564,7 @@ const FieldMapper = ({ data, onNext, onBack }) => {
                       );
                     })()}
                   </td>
-                  <td className="py-3 px-4">
+                  <td className="py-3 px-4 align-top min-w-[260px]">
                     {(() => {
                       const value = fieldData.value || '';
                       const isLongText = value.includes('\n') || value.length > 120;
@@ -462,7 +574,7 @@ const FieldMapper = ({ data, onNext, onBack }) => {
                           <textarea
                             value={value}
                             onChange={(e) => handleValueChange(fieldName, e.target.value)}
-                            className="input text-sm resize-y min-h-[120px]"
+                            className="input text-sm resize-y min-h-[120px] min-w-[18rem]"
                             disabled={!activeFieldNames.has(fieldName)}
                             placeholder="Değer giriniz"
                             rows={getTextareaRows(value)}
@@ -475,7 +587,7 @@ const FieldMapper = ({ data, onNext, onBack }) => {
                           type="text"
                           value={value}
                           onChange={(e) => handleValueChange(fieldName, e.target.value)}
-                          className="input text-sm"
+                          className="input text-sm min-w-[12rem]"
                           disabled={!activeFieldNames.has(fieldName)}
                           placeholder="Değer giriniz"
                         />
@@ -485,9 +597,9 @@ const FieldMapper = ({ data, onNext, onBack }) => {
                       <p className="text-xs text-gray-500 mt-1">{fieldData.source}</p>
                     )}
                   </td>
-                  <td className="py-3 px-4">
-                    <div className="flex items-center">
-                      <div className="w-24 bg-gray-200 rounded-full h-2 mr-2">
+                  <td className="py-3 px-4 align-top">
+                    <div className="flex items-center min-w-[160px]">
+                      <div className="flex-1 bg-gray-200 rounded-full h-2 mr-2 max-w-[220px]">
                         <div
                           className={`h-2 rounded-full ${
                             fieldData.confidence >= 0.8
@@ -499,7 +611,7 @@ const FieldMapper = ({ data, onNext, onBack }) => {
                           style={{ width: `${fieldData.confidence * 100}%` }}
                         ></div>
                       </div>
-                      <span className="text-sm">{(fieldData.confidence * 100).toFixed(0)}%</span>
+                      <span className="text-sm w-12 text-right">{(fieldData.confidence * 100).toFixed(0)}%</span>
                     </div>
                   </td>
                   <td className="py-3 px-4">
