@@ -16,6 +16,7 @@ from app.core.handwriting_interpreter import (
     determine_specialist_candidates,
     merge_field_mappings,
 )
+from app.core.smart_vision_fallback import merge_ocr_and_vision_results
 
 
 def test_determine_specialist_candidates_combines_tier_and_confidence() -> None:
@@ -37,6 +38,32 @@ def test_determine_specialist_candidates_combines_tier_and_confidence() -> None:
     )
 
     assert set(candidates.keys()) == {'amount', 'signature', 'notes'}
+
+
+def test_specialist_candidates_ignore_vision_boost_for_primary_selection() -> None:
+    template_fields = [
+        {'field_name': 'signature', 'llm_tier': 'handwriting'},
+    ]
+    primary_mapping = {
+        'signature': {'confidence': 0.25, 'source': 'llm-primary'},
+    }
+    vision_mapping = {
+        'signature': {'confidence': 0.95, 'source': 'vision'},
+    }
+
+    augmented = merge_ocr_and_vision_results(primary_mapping, vision_mapping)
+
+    assert augmented['signature']['confidence'] == 0.95
+
+    candidates = determine_specialist_candidates(
+        template_fields,
+        primary_mapping,
+        low_confidence_floor=0.6,
+        allowed_tiers=('handwriting',),
+    )
+
+    assert 'signature' in candidates
+    assert candidates['signature']['llm_tier'] == 'handwriting'
 
 
 def test_merge_field_mappings_prefers_highest_confidence_and_tracks_alternates() -> None:
