@@ -7,6 +7,7 @@ from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
 from app.config import settings
+from app.utils.data_masker import DataMasker
 from app.utils.smart_openai import (
     call_reasoning_model,
     extract_reasoning_response_text,
@@ -128,6 +129,11 @@ class AIFieldMapper:
                 field_hints=self._summarize_field_hints(hints)
             )
 
+            masker = DataMasker(enabled=settings.DATA_MASKING_ENABLED)
+            prompt_preview = prompt
+            if masker.enabled:
+                prompt_preview = masker.mask_text(prompt) or ""
+
             logger.info(
                 "AI istemci konfigürasyonu hazır: client_type=%s, hints=%s, regex_hits=%s",
                 "modern" if self._client is not None else "legacy",
@@ -137,7 +143,7 @@ class AIFieldMapper:
             logger.info(
                 "Oluşturulan prompt özeti: uzunluk=%s, ilk_200_karakter=%s",
                 len(prompt),
-                prompt[:200]
+                (prompt_preview or "")[:200]
             )
 
             source = (ocr_data or {}).get('source', 'unknown') if ocr_data else 'unknown'
@@ -177,6 +183,9 @@ class AIFieldMapper:
                     "content": prompt
                 }
             ]
+
+            if masker.enabled:
+                messages = masker.mask_messages(messages)
 
             logger.info("OpenAI API çağrısı hazırlanıyor...")
             if self._client is not None:
@@ -238,9 +247,9 @@ class AIFieldMapper:
                 self._safe_dump_response(response)
             )
 
-            ai_message = self._extract_ai_message(response)
+            raw_ai_message = self._extract_ai_message(response)
 
-            if not ai_message:
+            if not raw_ai_message:
                 logger.error("OpenAI'den boş yanıt alındı")
                 logger.error(
                     "Boş yanıt hatası için OpenAI response içeriği: %s",
@@ -253,8 +262,10 @@ class AIFieldMapper:
 
             logger.debug(
                 "AI ham yanıtı (ilk 1000 karakter): %s",
-                ai_message[:1000]
+                raw_ai_message[:1000]
             )
+
+            ai_message = masker.unmask_text(raw_ai_message)
 
             # Parse response
             result = self._parse_ai_response(
@@ -262,6 +273,8 @@ class AIFieldMapper:
                 template_fields,
                 field_evidence=field_evidence
             )
+
+            result = masker.unmask_structure(result)
 
             if ocr_data and isinstance(ocr_data, dict):
                 self._merge_ocr_confidence(result, ocr_data, template_fields)

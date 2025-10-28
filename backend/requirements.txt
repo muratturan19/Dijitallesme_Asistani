@@ -5,6 +5,7 @@ python-multipart
 pillow
 opencv-python-headless
 pytesseract
+easyocr
 pymupdf
 openpyxl
 openai

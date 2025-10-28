@@ -1,17 +1,35 @@
 # -*- coding: utf-8 -*-
+import logging
+import re
+import sys
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+
+import numpy as np
 import pytesseract
 from PIL import Image
-import logging
-from typing import Dict, List, Optional, Any, Tuple, Union
-import sys
+
+from app.config import settings
+
+try:  # pragma: no cover - optional dependency
+    import easyocr  # type: ignore
+except ImportError:  # pragma: no cover - EasyOCR may be optional in some deployments
+    easyocr = None  # type: ignore
 
 logger = logging.getLogger(__name__)
 
 
 class OCREngine:
-    """Tesseract OCR wrapper for text extraction"""
+    """OCR wrapper supporting both Tesseract and EasyOCR backends."""
 
-    def __init__(self, tesseract_cmd: str, language: str = "tur+eng"):
+    def __init__(
+        self,
+        tesseract_cmd: str,
+        language: str = "tur+eng",
+        *,
+        engine: Optional[str] = None,
+        use_easyocr: Optional[bool] = None,
+        easyocr_languages: Optional[Sequence[str]] = None,
+    ):
         """
         Initialize OCR engine
 
@@ -19,19 +37,106 @@ class OCREngine:
             tesseract_cmd: Path to tesseract executable
             language: OCR language(s) - default Turkish + English
         """
-        self.language = language
+        self.language = language or settings.TESSERACT_LANG
+        self._tesseract_cmd = tesseract_cmd
+        self._easyocr_reader: Optional[Any] = None
+        self._easyocr_languages: Sequence[str] = []
 
-        # Set Tesseract command path
-        if tesseract_cmd and tesseract_cmd != "tesseract":
-            pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
+        resolved_engine = self._resolve_engine_choice(use_easyocr, engine)
+        self.engine = resolved_engine
 
-        # Verify Tesseract is installed
+        if self.engine == "easyocr":
+            self._easyocr_languages = self._resolve_easyocr_languages(
+                easyocr_languages
+            )
+            if not self._initialize_easyocr(self._easyocr_languages):
+                logger.warning(
+                    "EasyOCR başlatılamadı, Tesseract motoruna geri dönülüyor."
+                )
+                self.engine = "tesseract"
+
+        if self.engine != "easyocr":
+            self.engine = "tesseract"
+            self._configure_tesseract()
+
+    def _resolve_engine_choice(
+        self, use_easyocr: Optional[bool], engine: Optional[str]
+    ) -> str:
+        if use_easyocr is not None:
+            return "easyocr" if use_easyocr else "tesseract"
+
+        if engine:
+            normalized = engine.strip().lower()
+            if normalized in {"easyocr", "tesseract"}:
+                return normalized
+
+        configured = str(getattr(settings, "OCR_ENGINE", "tesseract"))
+        normalized = configured.strip().lower()
+        return "easyocr" if normalized == "easyocr" else "tesseract"
+
+    def _configure_tesseract(self) -> None:
+        if self._tesseract_cmd and self._tesseract_cmd != "tesseract":
+            pytesseract.pytesseract.tesseract_cmd = self._tesseract_cmd
+
         try:
             version = pytesseract.get_tesseract_version()
-            logger.info(f"Tesseract versiyonu: {version}")
-        except Exception as e:
-            logger.error(f"Tesseract bulunamadı: {str(e)}")
-            logger.error("Tesseract kurulumu gerekli: https://github.com/tesseract-ocr/tesseract")
+            logger.info("Tesseract versiyonu: %s", version)
+        except Exception as exc:
+            logger.error("Tesseract bulunamadı: %s", exc)
+            logger.error(
+                "Tesseract kurulumu gerekli: https://github.com/tesseract-ocr/tesseract"
+            )
+
+    def _resolve_easyocr_languages(
+        self, languages: Optional[Sequence[str]] = None
+    ) -> Sequence[str]:
+        if languages:
+            candidates = [str(lang).strip() for lang in languages if str(lang).strip()]
+        else:
+            raw = self.language or "tur+eng"
+            segments = re.split(r"[+,]", raw)
+            candidates = [segment.strip() for segment in segments if segment.strip()]
+
+        mapping = {
+            "tur": "tr",
+            "trk": "tr",
+            "tr": "tr",
+            "eng": "en",
+            "en": "en",
+        }
+
+        resolved: List[str] = []
+        for code in candidates:
+            normalized = code.lower()
+            mapped = mapping.get(normalized, normalized)
+            if mapped and mapped not in resolved:
+                resolved.append(mapped)
+
+        if not resolved:
+            resolved = ["tr", "en"]
+
+        return resolved
+
+    def _initialize_easyocr(self, languages: Sequence[str]) -> bool:
+        if easyocr is None:
+            logger.warning("EasyOCR kütüphanesi yüklü değil.")
+            return False
+
+        try:
+            self._easyocr_reader = easyocr.Reader(  # type: ignore[misc]
+                list(languages),
+                gpu=settings.EASYOCR_USE_GPU,
+            )
+            logger.info(
+                "EasyOCR başlatıldı: diller=%s, gpu=%s",
+                ",".join(languages),
+                settings.EASYOCR_USE_GPU,
+            )
+            return True
+        except Exception as exc:
+            logger.error("EasyOCR başlatma hatası: %s", exc)
+            self._easyocr_reader = None
+            return False
 
     def extract_text(
         self,
@@ -53,87 +158,177 @@ class OCREngine:
                 - average_confidence: Overall confidence
         """
         try:
-            # Open image
             image = Image.open(image_path)
             processed_image = self._apply_roi(image, roi)
 
-            lang, config = self._build_tesseract_config(options)
+            if self.engine == "easyocr" and self._easyocr_reader is not None:
+                result = self._extract_with_easyocr(processed_image)
+            else:
+                lang, config = self._build_tesseract_config(options)
+                result = self._extract_with_tesseract(processed_image, lang, config)
 
-            # Extract text
-            text = pytesseract.image_to_string(
-                processed_image,
-                lang=lang,
-                config=config
-            )
-
-            # Extract detailed data (word-level)
-            data = pytesseract.image_to_data(
-                processed_image,
-                lang=lang,
-                config=config,
-                output_type=pytesseract.Output.DICT
-            )
-
-            # Process word-level data
-            words_with_bbox = []
-            confidence_scores = {}
-            total_conf = 0
-            word_count = 0
-
-            for i in range(len(data['text'])):
-                word = data['text'][i].strip()
-
-                if word:  # Only process non-empty words
-                    conf = int(data['conf'][i])
-
-                    if conf > 0:  # Only include words with valid confidence
-                        word_data = {
-                            'word': word,
-                            'confidence': conf / 100.0,  # Normalize to 0-1
-                            'bbox': {
-                                'x': data['left'][i],
-                                'y': data['top'][i],
-                                'w': data['width'][i],
-                                'h': data['height'][i]
-                            },
-                            'line_num': data['line_num'][i],
-                            'block_num': data['block_num'][i]
-                        }
-
-                        words_with_bbox.append(word_data)
-                        confidence_scores[word] = conf / 100.0
-
-                        total_conf += conf
-                        word_count += 1
-
-            # Calculate average confidence
-            avg_confidence = (total_conf / word_count / 100.0) if word_count > 0 else 0.0
-
-            result = {
-                'text': text.strip(),
-                'words_with_bbox': words_with_bbox,
-                'confidence_scores': confidence_scores,
-                'average_confidence': avg_confidence,
-                'word_count': word_count
-            }
+            result['engine'] = self.engine
 
             logger.info(
-                f"OCR tamamlandı: {word_count} kelime, "
-                f"ortalama güven: {avg_confidence:.2f}"
+                "OCR tamamlandı: engine=%s, kelime_sayısı=%s, ortalama_güven=%.2f",
+                self.engine,
+                result.get('word_count', 0),
+                result.get('average_confidence', 0.0),
             )
 
             return result
 
         except Exception as e:
-            logger.error(f"OCR hatası {image_path}: {str(e)}")
+            logger.error("OCR hatası %s: %s", image_path, e)
             return {
                 'text': '',
                 'words_with_bbox': [],
                 'confidence_scores': {},
                 'average_confidence': 0.0,
                 'word_count': 0,
-                'error': str(e)
+                'error': str(e),
+                'engine': self.engine,
             }
+
+    def _extract_with_tesseract(
+        self,
+        image: Image.Image,
+        lang: str,
+        config: Optional[str],
+    ) -> Dict[str, Any]:
+        text = pytesseract.image_to_string(
+            image,
+            lang=lang,
+            config=config,
+        )
+
+        data = pytesseract.image_to_data(
+            image,
+            lang=lang,
+            config=config,
+            output_type=pytesseract.Output.DICT,
+        )
+
+        words_with_bbox: List[Dict[str, Any]] = []
+        confidence_scores: Dict[str, float] = {}
+        total_conf = 0.0
+        word_count = 0
+
+        for i in range(len(data['text'])):
+            word = data['text'][i].strip()
+            if not word:
+                continue
+
+            try:
+                conf = float(data['conf'][i])
+            except (TypeError, ValueError):  # pragma: no cover - defensive
+                continue
+
+            if conf <= 0:
+                continue
+
+            normalized_conf = conf / 100.0
+            word_data = {
+                'word': word,
+                'confidence': normalized_conf,
+                'bbox': {
+                    'x': data['left'][i],
+                    'y': data['top'][i],
+                    'w': data['width'][i],
+                    'h': data['height'][i],
+                },
+                'line_num': data['line_num'][i],
+                'block_num': data['block_num'][i],
+            }
+
+            words_with_bbox.append(word_data)
+            confidence_scores[word] = normalized_conf
+            total_conf += conf
+            word_count += 1
+
+        avg_confidence = (total_conf / word_count / 100.0) if word_count > 0 else 0.0
+
+        return {
+            'text': text.strip(),
+            'words_with_bbox': words_with_bbox,
+            'confidence_scores': confidence_scores,
+            'average_confidence': avg_confidence,
+            'word_count': word_count,
+        }
+
+    def _extract_with_easyocr(self, image: Image.Image) -> Dict[str, Any]:
+        if self._easyocr_reader is None:
+            raise RuntimeError("EasyOCR motoru başlatılmadı.")
+
+        rgb_image = image.convert("RGB")
+        np_image = np.array(rgb_image)
+
+        detections = self._easyocr_reader.readtext(np_image, detail=1)
+
+        segments: List[str] = []
+        words_with_bbox: List[Dict[str, Any]] = []
+        confidence_scores: Dict[str, float] = {}
+        total_conf = 0.0
+        token_count = 0
+
+        for index, detection in enumerate(detections):
+            if not isinstance(detection, (list, tuple)) or len(detection) < 3:
+                continue
+
+            bbox, text, confidence = detection[:3]
+            text_value = (text or "").strip()
+            if not text_value:
+                continue
+
+            normalized_conf = float(confidence or 0.0)
+            normalized_conf = max(0.0, min(normalized_conf, 1.0))
+
+            if isinstance(bbox, (list, tuple)) and len(bbox) >= 4:
+                xs = [point[0] for point in bbox if isinstance(point, (list, tuple))]
+                ys = [point[1] for point in bbox if isinstance(point, (list, tuple))]
+                if xs and ys:
+                    x_min, x_max = min(xs), max(xs)
+                    y_min, y_max = min(ys), max(ys)
+                    bbox_dict = {
+                        'x': int(x_min),
+                        'y': int(y_min),
+                        'w': int(x_max - x_min),
+                        'h': int(y_max - y_min),
+                    }
+                else:
+                    bbox_dict = {'x': 0, 'y': 0, 'w': 0, 'h': 0}
+            else:
+                bbox_dict = {'x': 0, 'y': 0, 'w': 0, 'h': 0}
+
+            words_with_bbox.append(
+                {
+                    'word': text_value,
+                    'confidence': normalized_conf,
+                    'bbox': bbox_dict,
+                    'line_num': index + 1,
+                    'block_num': 1,
+                }
+            )
+
+            tokens = [token for token in re.split(r"\s+", text_value) if token]
+            if not tokens:
+                tokens = [text_value]
+
+            for token in tokens:
+                confidence_scores[token] = normalized_conf
+                total_conf += normalized_conf
+            token_count += len(tokens)
+            segments.append(text_value)
+
+        average_confidence = (total_conf / token_count) if token_count else 0.0
+
+        return {
+            'text': "\n".join(segments).strip(),
+            'words_with_bbox': words_with_bbox,
+            'confidence_scores': confidence_scores,
+            'average_confidence': average_confidence,
+            'word_count': token_count,
+        }
 
     def extract_text_simple(
         self,
@@ -154,12 +349,15 @@ class OCREngine:
             image = Image.open(image_path)
             processed_image = self._apply_roi(image, roi)
 
-            lang, config = self._build_tesseract_config(options)
+            if self.engine == "easyocr" and self._easyocr_reader is not None:
+                result = self._extract_with_easyocr(processed_image)
+                return result.get('text', '')
 
+            lang, config = self._build_tesseract_config(options)
             text = pytesseract.image_to_string(
                 processed_image,
                 lang=lang,
-                config=config
+                config=config,
             )
             return text.strip()
         except Exception as e:

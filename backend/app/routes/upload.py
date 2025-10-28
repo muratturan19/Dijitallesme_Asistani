@@ -8,6 +8,7 @@ import logging
 
 from ..config import settings
 from ..database import get_db, Document
+from ..utils.audit_logger import AuditLogger
 from ..models import DocumentResponse
 
 logger = logging.getLogger(__name__)
@@ -66,6 +67,16 @@ async def upload_sample_document(
         db.commit()
         db.refresh(document)
 
+        AuditLogger(db).log_event(
+            "upload",
+            "document",
+            document.id,
+            metadata={
+                "filename": file.filename,
+                "destination": "sample",
+            },
+        )
+
         logger.info(f"Örnek belge yüklendi: {document.id}")
 
         return {
@@ -122,6 +133,16 @@ async def upload_template_file(
 
         logger.info(f"Excel şablonu yüklendi: {len(fields)} alan bulundu")
 
+        AuditLogger(db).log_event(
+            "upload",
+            "template_file",
+            None,
+            metadata={
+                "filename": file.filename,
+                "parsed_fields": len(fields),
+            },
+        )
+
         return {
             "template_file": unique_filename,
             "fields": fields,
@@ -156,6 +177,7 @@ async def upload_batch_files(
             )
 
         uploaded_docs = []
+        audit_logger = AuditLogger(db)
 
         for file in files:
             # Validate file
@@ -184,6 +206,17 @@ async def upload_batch_files(
             db.add(document)
             db.commit()
             db.refresh(document)
+
+            audit_logger.log_event(
+                "upload",
+                "document",
+                document.id,
+                metadata={
+                    "filename": file.filename,
+                    "destination": "batch",
+                    "template_id": template_id,
+                },
+            )
 
             uploaded_docs.append({
                 "document_id": document.id,
