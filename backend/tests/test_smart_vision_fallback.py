@@ -32,6 +32,32 @@ class DummyClient:
         self.responses = DummyResponses(payload)
 
 
+class DummyCompletions:
+    """Stub for the chat.completions endpoint."""
+
+    def __init__(self, payload: Dict[str, Any]) -> None:
+        self.payload = payload
+        self.last_kwargs: Optional[Dict[str, Any]] = None
+
+    def create(self, **kwargs: Any) -> Dict[str, Any]:
+        self.last_kwargs = kwargs
+        return self.payload
+
+
+class DummyChat:
+    """Stub that exposes a completions attribute."""
+
+    def __init__(self, payload: Dict[str, Any]) -> None:
+        self.completions = DummyCompletions(payload)
+
+
+class DummyChatClient:
+    """Client stub that mimics chat.completions availability."""
+
+    def __init__(self, payload: Dict[str, Any]) -> None:
+        self.chat = DummyChat(payload)
+
+
 @pytest.fixture
 def low_quality_ocr_result() -> Dict[str, Any]:
     """Return a synthetic OCR output that should trigger fallback."""
@@ -88,6 +114,48 @@ def test_low_confidence_triggers_vision_call(
     content = client.responses.last_kwargs['input'][1]['content'][1]
     assert content['type'] == 'input_image'
     assert str(content['image_url']).startswith('data:')
+
+
+def test_chat_completions_payload_includes_image(tmp_path) -> None:
+    """Fallback should send both text instructions and the encoded image."""
+
+    payload = {
+        'field_mappings': {
+            'invoice_no': {
+                'value': 'V123',
+                'confidence': 0.92,
+                'source': 'vision',
+            }
+        }
+    }
+
+    client = DummyChatClient(payload)
+    fallback = SmartVisionFallback(
+        api_key="dummy",
+        model="gpt-4o-mini",
+        client=client,
+    )
+
+    image_path = tmp_path / "test.png"
+    image_path.write_bytes(b"fake image bytes")
+
+    response = fallback.extract_with_vision(
+        str(image_path),
+        [{'field_name': 'invoice_no'}],
+        ocr_fallback="previous",
+    )
+
+    assert 'field_mappings' in response
+    completions = client.chat.completions
+    assert completions.last_kwargs is not None
+    messages = completions.last_kwargs['messages']
+    assert messages[1]['role'] == 'user'
+    content = messages[1]['content']
+    assert isinstance(content, list)
+    assert content[0]['type'] == 'text'
+    assert content[0]['text'].startswith('Analyze the provided document image')
+    assert content[1]['type'] == 'input_image'
+    assert str(content[1]['image_url']).startswith('data:')
 
 
 def test_merge_prefers_highest_confidence() -> None:

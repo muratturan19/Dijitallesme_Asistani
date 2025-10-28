@@ -212,7 +212,10 @@ class SmartVisionFallback:
                         },
                         {
                             "role": "user",
-                            "content": instructions,
+                            "content": [
+                                {"type": "text", "text": instructions},
+                                image_content,
+                            ],
                         },
                     ],
                 )
