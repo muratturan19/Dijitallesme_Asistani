@@ -223,16 +223,18 @@ async def analyze_document(
                 'overall_confidence': 0.0
             }
 
-        primary_field_mappings = mapping_result.get('field_mappings') or {}
+        primary_llm_mapping = mapping_result.get('field_mappings') or {}
 
+        augmented_mapping = primary_llm_mapping
         if vision_response and vision_response.get('field_mappings'):
-            primary_field_mappings = merge_ocr_and_vision_results(
-                primary_field_mappings,
+            augmented_mapping = merge_ocr_and_vision_results(
+                primary_llm_mapping,
                 vision_response['field_mappings'],
             )
+
         candidate_configs = determine_specialist_candidates(
             template_fields,
-            primary_field_mappings,
+            primary_llm_mapping,
             low_confidence_floor=settings.AI_HANDWRITING_LOW_CONFIDENCE_THRESHOLD,
             allowed_tiers=settings.AI_HANDWRITING_TIERS,
         )
@@ -252,7 +254,7 @@ async def analyze_document(
             specialist_response = interpreter.interpret_fields(
                 ocr_result,
                 candidate_configs,
-                primary_field_mappings,
+                augmented_mapping,
                 field_hints=field_hints,
                 document_info={
                     'document_id': document.id,
@@ -278,7 +280,7 @@ async def analyze_document(
                 )
 
         merged_mappings = merge_field_mappings(
-            primary_field_mappings,
+            augmented_mapping,
             specialist_mapping,
         )
 
