@@ -4,7 +4,6 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy import inspect
 
-
 revision = "7c3e1d2a9f4b"
 down_revision = "b9da4b693915"
 branch_labels = None
@@ -33,7 +32,12 @@ def upgrade() -> None:
         sa.Column("description", sa.Text(), nullable=True),
         sa.Column("payload", sa.JSON(), nullable=True),
         sa.Column("ip_address", sa.String(length=45), nullable=True),
-        sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
+        sa.Column(
+            "created_at",
+            sa.DateTime(),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
     )
 
     op.create_index("ix_audit_logs_event_type", "audit_logs", ["event_type"])
@@ -44,4 +48,3 @@ def downgrade() -> None:
     op.drop_index("ix_audit_logs_created_at", table_name="audit_logs")
     op.drop_index("ix_audit_logs_event_type", table_name="audit_logs")
     op.drop_table("audit_logs")
-
