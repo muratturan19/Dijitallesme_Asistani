@@ -150,7 +150,7 @@ def test_handwriting_prompt_includes_field_level_context() -> None:
     assert primary_snippet['bounding_box']['w'] == 90
 
 
-def test_reasoning_model_applies_temperature_via_top_p() -> None:
+def test_reasoning_model_omits_top_p_for_responses_transport() -> None:
     interpreter = HandwritingInterpreter(
         api_key="",
         model="gpt-5.1-mini",
@@ -209,14 +209,12 @@ def test_reasoning_model_applies_temperature_via_top_p() -> None:
 
     assert captured["model"] == "gpt-5.1-mini"
     assert captured["temperature"] is None
-    assert captured["extra_kwargs"] is not None
-    assert abs(captured["extra_kwargs"]["top_p"] - 0.42) < 1e-6
-    assert captured["extra_kwargs"]["max_output_tokens"] == 256
+    assert captured["extra_kwargs"] == {"max_output_tokens": 256}
 
     metadata = result.get("model_metadata") or {}
     assert metadata.get("transport") == "responses"
     reasoning_params = metadata.get("reasoning_parameters") or {}
-    assert abs(reasoning_params.get("top_p", 0.0) - 0.42) < 1e-6
+    assert "top_p" not in reasoning_params
     assert reasoning_params.get("max_output_tokens") == 256
 
 
@@ -351,7 +349,7 @@ def test_template_analyze_includes_specialist_model_metadata() -> None:
                     "model": "gpt-5",
                     "transport": "responses",
                     "reasoning_effort": "high",
-                    "reasoning_parameters": {"top_p": 0.3},
+                    "reasoning_parameters": {"max_output_tokens": 2048},
                 },
             }
 
@@ -403,4 +401,4 @@ def test_template_analyze_includes_specialist_model_metadata() -> None:
     specialist = result["specialist"]
     assert specialist["model"]["model"] == "gpt-5"
     assert specialist["model"]["reasoning_effort"] == "high"
-    assert specialist["model"]["reasoning_parameters"]["top_p"] == 0.3
+    assert specialist["model"]["reasoning_parameters"]["max_output_tokens"] == 2048
