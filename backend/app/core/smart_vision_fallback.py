@@ -334,8 +334,10 @@ class SmartVisionFallback:
             logger.warning("Vision fallback yanıtında çözümlenebilir metin bulunamadı.")
             return {}
 
+        cleaned_output = self._strip_code_fences(text_output)
+
         try:
-            parsed = json.loads(text_output)
+            parsed = json.loads(cleaned_output)
         except json.JSONDecodeError:
             logger.warning(
                 "Vision fallback yanıtı JSON formatında değil: %s", text_output
@@ -349,6 +351,32 @@ class SmartVisionFallback:
 
         logger.warning("Vision fallback yanıtından alan eşleşmeleri çıkarılamadı.")
         return {}
+
+    @staticmethod
+    def _strip_code_fences(text_output: str) -> str:
+        """Remove leading and trailing Markdown code fences from a payload."""
+
+        text_output = (text_output or "").strip()
+
+        if not text_output.startswith("```"):
+            return text_output
+
+        lines = text_output.splitlines()
+        if not lines:
+            return text_output
+
+        first_line = lines[0].strip()
+        if first_line.startswith("```"):
+            lines = lines[1:]
+
+        while lines and not lines[-1].strip():
+            lines.pop()
+
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+
+        cleaned = "\n".join(lines).strip()
+        return cleaned or text_output
 
     @staticmethod
     def _extract_from_dict(payload: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:

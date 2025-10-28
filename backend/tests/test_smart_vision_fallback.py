@@ -183,3 +183,29 @@ def test_merge_prefers_highest_confidence() -> None:
     alternates = merged['invoice_no'].get('alternates', [])
     assert any(item.get('value') == '123' for item in alternates)
     assert any(item.get('source') == 'ocr' for item in alternates)
+
+
+def test_parse_handles_markdown_json_block(tmp_path) -> None:
+    """Vision response payloads wrapped in code fences should be parsed."""
+
+    fenced_json = """```json\n{\n  \"field_mappings\": {\n    \"invoice_no\": {\n      \"value\": \"V123\",\n      \"confidence\": 0.9,\n      \"source\": \"vision\"\n    }\n  }\n}\n```"""
+
+    payload = {'text': fenced_json}
+
+    client = DummyClient(payload)
+    fallback = SmartVisionFallback(
+        api_key="dummy",
+        model="gpt-4o-mini",
+        client=client,
+    )
+
+    image_path = tmp_path / "test.png"
+    image_path.write_bytes(b"fake image bytes")
+
+    response = fallback.extract_with_vision(
+        str(image_path),
+        [{'field_name': 'invoice_no'}],
+    )
+
+    assert 'field_mappings' in response
+    assert response['field_mappings']['invoice_no']['value'] == 'V123'
