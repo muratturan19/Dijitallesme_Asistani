@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import inspect
+import json
 import logging
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
@@ -53,11 +54,32 @@ def _text_value_from_piece(piece: Any) -> Optional[str]:
     """Extract string value from a response content piece."""
 
     if isinstance(piece, dict):
+        json_payload = piece.get("json")
+        if json_payload is not None:
+            try:
+                return json.dumps(json_payload, ensure_ascii=False)
+            except (TypeError, ValueError):
+                logger.debug("JSON payload serialization başarısız: %s", json_payload)
+        if piece.get("type") in {"output_json", "json"} and piece.get("parsed") is not None:
+            try:
+                return json.dumps(piece.get("parsed"), ensure_ascii=False)
+            except (TypeError, ValueError):
+                logger.debug(
+                    "Parsed JSON payload serileştirilemedi: %s", piece.get("parsed"),
+                )
         text_obj = piece.get("text")
         value = piece.get("value")
     else:
         text_obj = getattr(piece, "text", None)
         value = getattr(piece, "value", None)
+
+    if value is None and hasattr(piece, "json"):
+        json_payload = getattr(piece, "json", None)
+        if json_payload is not None:
+            try:
+                return json.dumps(json_payload, ensure_ascii=False)
+            except (TypeError, ValueError):
+                logger.debug("JSON attribute serialization başarısız: %s", json_payload)
 
     if value:
         value_str = str(value).strip()
@@ -68,6 +90,21 @@ def _text_value_from_piece(piece: Any) -> Optional[str]:
         text_obj = piece.get("value")
 
     if text_obj is None:
+        return None
+
+    if isinstance(text_obj, (list, tuple)):
+        parts: List[str] = []
+        for item in text_obj:
+            nested = _text_value_from_piece(item)
+            if nested:
+                parts.append(nested)
+            elif isinstance(item, dict):
+                fallback_text = item.get("text") or item.get("value")
+                if isinstance(fallback_text, str) and fallback_text.strip():
+                    parts.append(fallback_text.strip())
+        combined = "".join(parts).strip()
+        if combined:
+            return combined
         return None
 
     if isinstance(text_obj, dict):

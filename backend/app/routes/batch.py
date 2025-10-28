@@ -98,6 +98,7 @@ async def process_document_task(
     db = SessionLocal()
 
     try:
+        process_started = time.perf_counter()
         # Get document and template
         document = db.query(Document).filter(Document.id == document_id).first()
         template = db.query(Template).filter(Template.id == template_id).first()
