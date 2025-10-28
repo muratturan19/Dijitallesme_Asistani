@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Form
 from sqlalchemy.orm import Session
 import shutil
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import logging
 
 from ..config import settings
@@ -160,7 +160,7 @@ async def upload_template_file(
 @router.post("/batch", response_model=Dict[str, Any])
 async def upload_batch_files(
     files: list[UploadFile] = File(...),
-    template_id: int = None,
+    template_id: Optional[int] = Form(None),
     db: Session = Depends(get_db)
 ):
     """
@@ -178,6 +178,7 @@ async def upload_batch_files(
 
         uploaded_docs = []
         audit_logger = AuditLogger(db)
+        template_id_value = int(template_id) if template_id is not None else None
 
         for file in files:
             # Validate file
@@ -199,7 +200,7 @@ async def upload_batch_files(
             document = Document(
                 filename=file.filename,
                 file_path=str(file_path),
-                template_id=template_id,
+                template_id=template_id_value,
                 status="pending"
             )
 
@@ -214,7 +215,7 @@ async def upload_batch_files(
                 metadata={
                     "filename": file.filename,
                     "destination": "batch",
-                    "template_id": template_id,
+                    "template_id": template_id_value,
                 },
             )
 
