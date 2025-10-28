@@ -2,9 +2,10 @@
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
-from typing import Dict, Any
+from typing import Dict, Any, List
 import logging
 from pathlib import Path
+import re
 
 from ..config import settings
 from ..database import get_db, BatchJob, Document, ExtractedData, Template
@@ -43,20 +44,26 @@ async def export_batch_results(
             raise HTTPException(status_code=404, detail="Şablon bulunamadı")
 
         # Get all extracted data for this batch
-        documents = db.query(Document).filter(
+        batch_documents = db.query(Document).filter(
             Document.batch_job_id == batch_job_id,
             Document.status == "completed"
         ).all()
 
-        if not documents:
+        if not batch_documents:
             raise HTTPException(
                 status_code=404,
                 detail="Dışa aktarılacak veri bulunamadı"
             )
 
-        extracted_data_list = []
+        # Collect all completed documents for this template to include previous runs
+        all_documents = db.query(Document).filter(
+            Document.template_id == template.id,
+            Document.status == "completed"
+        ).order_by(Document.upload_date.asc()).all()
 
-        for doc in documents:
+        extracted_data_list: List[Dict[str, Any]] = []
+
+        for doc in all_documents:
             extracted_data = db.query(ExtractedData).filter(
                 ExtractedData.document_id == doc.id
             ).first()
@@ -71,11 +78,18 @@ async def export_batch_results(
         # Export to Excel
         export_manager = ExportManager(settings.OUTPUT_DIR)
 
-        filename = f"batch_{batch_job_id}_results.xlsx"
+        safe_template_name = re.sub(r"[^0-9A-Za-zğüşöçıİĞÜŞÖÇ]+", "_", template.name).strip("_") or "template"
+        filename = f"template_{template.id}_{safe_template_name}_results.xlsx"
         excel_path = export_manager.export_to_excel(
             template.target_fields,
             extracted_data_list,
-            filename
+            filename,
+            metadata={
+                "Toplu İş ID": batch_job_id,
+                "Şablon ID": template.id,
+                "Şablon Adı": template.name,
+                "Toplam Belge": len(extracted_data_list)
+            }
         )
 
         logger.info(f"Excel dışa aktarıldı: {excel_path}")

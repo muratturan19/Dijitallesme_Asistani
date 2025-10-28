@@ -3,7 +3,7 @@ import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from pathlib import Path
 from datetime import datetime
 
@@ -27,7 +27,8 @@ class ExportManager:
         self,
         template_fields: List[Dict[str, Any]],
         extracted_data_list: List[Dict[str, Any]],
-        filename: str = None
+        filename: str = None,
+        metadata: Optional[Dict[str, Any]] = None
     ) -> str:
         """
         Export extracted data to Excel file
@@ -81,7 +82,7 @@ class ExportManager:
             self._auto_adjust_columns(ws)
 
             # Add metadata sheet
-            self._add_metadata_sheet(wb, template_fields, extracted_data_list)
+            self._add_metadata_sheet(wb, template_fields, extracted_data_list, metadata)
 
             # Save file
             output_path = self.output_dir / filename
@@ -177,7 +178,8 @@ class ExportManager:
         self,
         wb,
         template_fields: List[Dict[str, Any]],
-        extracted_data_list: List[Dict[str, Any]]
+        extracted_data_list: List[Dict[str, Any]],
+        metadata: Optional[Dict[str, Any]] = None
     ):
         """
         Add metadata sheet with export information
@@ -197,6 +199,11 @@ class ExportManager:
             ws_meta.append(["Tarih:", datetime.now().strftime("%d/%m/%Y %H:%M:%S")])
             ws_meta.append(["Kayıt Sayısı:", len(extracted_data_list)])
             ws_meta.append(["Alan Sayısı:", len(template_fields)])
+
+            if metadata:
+                ws_meta.append([])
+                for key, value in metadata.items():
+                    ws_meta.append([f"{key}:", value])
             ws_meta.append([])
 
             # Add field information
