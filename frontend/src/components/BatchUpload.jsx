@@ -44,6 +44,18 @@ const BatchUpload = ({ templateId, onComplete, onStartCorrection }) => {
       // Start batch processing
       const result = await startBatchProcessing(templateId);
       setBatchJobId(result.batch_job_id);
+      setStatus({
+        batch_job_id: result.batch_job_id,
+        status: 'processing',
+        progress: 0,
+        total_files: result.total_files ?? files.length,
+        processed_files: 0,
+        failed_files: 0,
+        low_confidence_items: [],
+        failed_documents: [],
+        applied_rules: result.applied_rules ?? null,
+      });
+      setFiles([]);
       toast.success('Toplu işlem başlatıldı!');
     } catch (error) {
       toast.error('Hata: ' + (error.response?.data?.detail || error.message));
