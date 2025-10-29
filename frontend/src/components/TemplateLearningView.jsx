@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'react-toastify';
 import {
   getTemplates,
@@ -14,8 +14,73 @@ const initialFormState = {
   templateFieldId: '',
   originalValue: '',
   correctedValue: '',
-  context: '',
+  context: {},
   userId: '',
+};
+
+const isConvertibleToPlainString = (value) => {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return true;
+  }
+
+  if (['true', 'false', 'null'].includes(trimmed)) {
+    return false;
+  }
+
+  if (!Number.isNaN(Number(trimmed))) {
+    return false;
+  }
+
+  const firstChar = trimmed[0];
+  if (firstChar === '{' || firstChar === '[' || firstChar === '"') {
+    return false;
+  }
+
+  return true;
+};
+
+const parseContextValue = (rawValue) => {
+  const trimmed = rawValue.trim();
+  if (!trimmed) {
+    return { value: '' };
+  }
+
+  try {
+    return { value: JSON.parse(trimmed) };
+  } catch (error) {
+    if (trimmed.length >= 2 && trimmed.startsWith("'") && trimmed.endsWith("'")) {
+      return { value: trimmed.slice(1, -1) };
+    }
+
+    if (isConvertibleToPlainString(rawValue)) {
+      return { value: rawValue };
+    }
+
+    return {
+      error: 'Değer JSON formatına dönüştürülemedi. Lütfen geçerli bir JSON ifadesi girin veya düz metin kullanın.',
+    };
+  }
+};
+
+const stringifyContextValue = (value) => {
+  if (typeof value === 'string') {
+    return value;
+  }
+
+  return JSON.stringify(value, null, 2);
+};
+
+const buildContextObjectFromRows = (rows) => {
+  return rows.reduce((accumulator, row) => {
+    const key = row.key.trim();
+    if (!key || row.error || row.keyError) {
+      return accumulator;
+    }
+
+    accumulator[key] = row.parsedValue;
+    return accumulator;
+  }, {});
 };
 
 const TemplateLearningView = ({ onBack, initialDocumentId, initialFieldId, initialTemplateId }) => {
@@ -50,6 +115,188 @@ const TemplateLearningView = ({ onBack, initialDocumentId, initialFieldId, initi
   const [loadingHints, setLoadingHints] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const contextRowIdRef = useRef(0);
+  const createEmptyContextRow = () => ({
+    id: contextRowIdRef.current++,
+    key: '',
+    rawValue: '',
+    parsedValue: '',
+    error: '',
+    keyError: '',
+  });
+  const [contextRows, setContextRows] = useState(() => [createEmptyContextRow()]);
+  const [contextMode, setContextMode] = useState('form');
+  const [contextJsonText, setContextJsonText] = useState('');
+  const [contextJsonError, setContextJsonError] = useState('');
+  const syncContextRows = (rows) => {
+    const duplicateCounts = rows.reduce((accumulator, row) => {
+      const trimmedKey = row.key.trim();
+      if (trimmedKey) {
+        accumulator[trimmedKey] = (accumulator[trimmedKey] || 0) + 1;
+      }
+      return accumulator;
+    }, {});
+
+    const normalizedRows = rows.map((row) => {
+      const trimmedKey = row.key.trim();
+      let keyError = '';
+      if (trimmedKey && duplicateCounts[trimmedKey] > 1) {
+        keyError = 'Anahtar benzersiz olmalıdır.';
+      } else if (!trimmedKey && row.rawValue.trim()) {
+        keyError = 'Anahtar gereklidir.';
+      }
+
+      return {
+        ...row,
+        keyError,
+      };
+    });
+
+    const contextObject = buildContextObjectFromRows(normalizedRows);
+    setFormState((prev) => ({ ...prev, context: contextObject }));
+
+    const hasRowIssues = normalizedRows.some((row) => row.error || row.keyError);
+    if (contextMode === 'form' && !hasRowIssues && contextJsonError) {
+      setContextJsonError('');
+    }
+
+    return normalizedRows.length > 0 ? normalizedRows : [createEmptyContextRow()];
+  };
+
+  const updateContextRows = (updater) => {
+    setContextRows((previousRows) => {
+      const rows = typeof updater === 'function' ? updater(previousRows) : updater;
+      return syncContextRows(rows);
+    });
+  };
+
+  const handleContextKeyChange = (rowId, value) => {
+    updateContextRows((rows) =>
+      rows.map((row) =>
+        row.id === rowId
+          ? {
+              ...row,
+              key: value,
+            }
+          : row
+      )
+    );
+  };
+
+  const handleContextValueChange = (rowId, value) => {
+    updateContextRows((rows) =>
+      rows.map((row) => {
+        if (row.id !== rowId) {
+          return row;
+        }
+
+        const parsedResult = parseContextValue(value);
+        return {
+          ...row,
+          rawValue: value,
+          parsedValue: parsedResult.error ? undefined : parsedResult.value,
+          error: parsedResult.error || '',
+        };
+      })
+    );
+  };
+
+  const handleAddContextRow = () => {
+    updateContextRows((rows) => [...rows, createEmptyContextRow()]);
+  };
+
+  const handleRemoveContextRow = (rowId) => {
+    updateContextRows((rows) => rows.filter((row) => row.id !== rowId));
+  };
+
+  const handleContextModeChange = (mode) => {
+    if (mode === contextMode) {
+      return;
+    }
+
+    if (mode === 'json') {
+      const hasErrors = contextRows.some((row) => row.error || row.keyError);
+      if (hasErrors) {
+        setContextJsonError('JSON moduna geçmeden önce bağlam alanındaki hataları düzeltin.');
+        return;
+      }
+
+      const contextObject = buildContextObjectFromRows(contextRows);
+      if (contextJsonError) {
+        setContextJsonError('');
+      }
+      setContextJsonText(
+        Object.keys(contextObject).length === 0
+          ? ''
+          : JSON.stringify(contextObject, null, 2)
+      );
+      setContextJsonError('');
+      setContextMode('json');
+      return;
+    }
+
+    const trimmedText = contextJsonText.trim();
+    if (!trimmedText) {
+      setFormState((prev) => ({ ...prev, context: {} }));
+      setContextRows(syncContextRows([createEmptyContextRow()]));
+      setContextJsonError('');
+      setContextMode('form');
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(trimmedText);
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        setContextJsonError('Bağlam bilgisi yalnızca JSON nesnesi olmalıdır.');
+        return;
+      }
+
+      setFormState((prev) => ({ ...prev, context: parsed }));
+      setContextRows(
+        syncContextRows(
+          Object.entries(parsed).length === 0
+            ? [createEmptyContextRow()]
+            : Object.entries(parsed).map(([key, value]) => ({
+                id: contextRowIdRef.current++,
+                key,
+                rawValue: stringifyContextValue(value),
+                parsedValue: value,
+                error: '',
+                keyError: '',
+              }))
+        )
+      );
+      setContextJsonError('');
+      setContextMode('form');
+    } catch (error) {
+      setContextJsonError('Bağlam bilgisi geçerli JSON formatında olmalıdır.');
+    }
+  };
+
+  const handleContextJsonChange = (event) => {
+    const value = event.target.value;
+    setContextJsonText(value);
+
+    const trimmed = value.trim();
+    if (!trimmed) {
+      setFormState((prev) => ({ ...prev, context: {} }));
+      setContextJsonError('');
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        setContextJsonError('Bağlam bilgisi yalnızca JSON nesnesi olmalıdır.');
+        return;
+      }
+
+      setFormState((prev) => ({ ...prev, context: parsed }));
+      setContextJsonError('');
+    } catch (error) {
+      setContextJsonError('Bağlam bilgisi geçerli JSON formatında olmalıdır.');
+    }
+  };
 
   useEffect(() => {
     const loadTemplates = async () => {
@@ -282,21 +529,47 @@ const TemplateLearningView = ({ onBack, initialDocumentId, initialFieldId, initi
     }
 
     let contextPayload = undefined;
-    if (formState.context) {
-      try {
-        contextPayload = JSON.parse(formState.context);
-      } catch (error) {
+    if (contextMode === 'json') {
+      if (contextJsonError) {
         toast.error('Bağlam bilgisi geçerli JSON formatında olmalıdır.');
         return;
+      }
+
+      const trimmed = contextJsonText.trim();
+      if (trimmed) {
+        try {
+          const parsed = JSON.parse(trimmed);
+          if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            toast.error('Bağlam bilgisi yalnızca JSON nesnesi olmalıdır.');
+            return;
+          }
+          contextPayload = parsed;
+        } catch (error) {
+          toast.error('Bağlam bilgisi geçerli JSON formatında olmalıdır.');
+          return;
+        }
+      }
+    } else {
+      const hasRowErrors = contextRows.some((row) => row.error || row.keyError);
+      if (hasRowErrors) {
+        toast.error('Bağlam alanındaki hataları düzeltin.');
+        return;
+      }
+
+      const contextObject = buildContextObjectFromRows(contextRows);
+      if (Object.keys(contextObject).length > 0) {
+        contextPayload = contextObject;
       }
     }
 
     setSubmitting(true);
     try {
-      const parsedTemplateFieldId = Number(formState.templateFieldId);
-      const templateFieldIdValue = Number.isFinite(parsedTemplateFieldId)
-        ? parsedTemplateFieldId
-        : undefined;
+      const parsedTemplateFieldId =
+        formState.templateFieldId === '' ? undefined : Number(formState.templateFieldId);
+      const templateFieldIdValue =
+        parsedTemplateFieldId !== undefined && Number.isFinite(parsedTemplateFieldId)
+          ? parsedTemplateFieldId
+          : undefined;
 
       await submitLearningCorrection({
         documentId: parsedDocumentId,
@@ -311,6 +584,10 @@ const TemplateLearningView = ({ onBack, initialDocumentId, initialFieldId, initi
         ...initialFormState,
         templateFieldId: templateFieldIdValue !== undefined ? String(templateFieldIdValue) : '',
       }));
+      setContextRows([createEmptyContextRow()]);
+      setContextMode('form');
+      setContextJsonText('');
+      setContextJsonError('');
       setSelectedFieldId(templateFieldIdValue !== undefined ? String(templateFieldIdValue) : '');
       await Promise.all([
         fetchLearnedHints(Number(selectedTemplateId), sampleLimit).then((response) => {
@@ -491,18 +768,100 @@ const TemplateLearningView = ({ onBack, initialDocumentId, initialFieldId, initi
               />
             </div>
 
-            <div>
-              <label className="label" htmlFor="context">
-                Bağlam Bilgisi (JSON)
-              </label>
-              <textarea
-                id="context"
-                name="context"
-                value={formState.context}
-                onChange={handleFormChange}
-                className="input h-32"
-                placeholder='{"reason": "manual_review"}'
-              />
+            <div className="md:col-span-2">
+              <div className="flex items-center justify-between gap-4">
+                <label className="label mb-0" htmlFor="context-json">
+                  Bağlam Bilgisi
+                </label>
+                <div className="flex items-center gap-2 text-sm">
+                  <button
+                    type="button"
+                    className={`btn btn-secondary px-3 py-1 ${
+                      contextMode === 'form' ? 'bg-gray-200 border-gray-300 text-gray-900' : ''
+                    }`}
+                    aria-pressed={contextMode === 'form'}
+                    onClick={() => handleContextModeChange('form')}
+                  >
+                    Form
+                  </button>
+                  <button
+                    type="button"
+                    className={`btn btn-secondary px-3 py-1 ${
+                      contextMode === 'json' ? 'bg-gray-200 border-gray-300 text-gray-900' : ''
+                    }`}
+                    aria-pressed={contextMode === 'json'}
+                    onClick={() => handleContextModeChange('json')}
+                  >
+                    JSON
+                  </button>
+                </div>
+              </div>
+              <p className="text-sm text-gray-500 mt-1">
+                Anahtar/değer çiftleri ekleyin veya geçerli bir JSON nesnesi girin. Değerler otomatik
+                olarak JSON&apos;a dönüştürülür.
+              </p>
+
+              {contextMode === 'form' ? (
+                <div className="mt-4 space-y-4">
+                  {contextJsonError && (
+                    <p className="text-sm text-red-600">{contextJsonError}</p>
+                  )}
+                  {contextRows.map((row, index) => (
+                    <div key={row.id} className="grid grid-cols-1 md:grid-cols-5 gap-3">
+                      <div className="md:col-span-2">
+                        <input
+                          id={`context-key-${row.id}`}
+                          className="input"
+                          placeholder="Anahtar (örn. reason)"
+                          value={row.key}
+                          onChange={(event) => handleContextKeyChange(row.id, event.target.value)}
+                        />
+                        {row.keyError && (
+                          <p className="text-sm text-red-600 mt-1">{row.keyError}</p>
+                        )}
+                      </div>
+                      <div className="md:col-span-3 space-y-2">
+                        <div className="flex items-start gap-2">
+                          <textarea
+                            id={`context-value-${row.id}`}
+                            className="input h-24 flex-1"
+                            placeholder='Değer (örn. "manual_review" ya da 12)'
+                            value={row.rawValue}
+                            onChange={(event) => handleContextValueChange(row.id, event.target.value)}
+                          />
+                          {contextRows.length > 1 && (
+                            <button
+                              type="button"
+                              className="btn btn-secondary"
+                              onClick={() => handleRemoveContextRow(row.id)}
+                              aria-label={`Bağlam satırını kaldır (${row.key || `satır ${index + 1}`})`}
+                            >
+                              Sil
+                            </button>
+                          )}
+                        </div>
+                        {row.error && <p className="text-sm text-red-600">{row.error}</p>}
+                      </div>
+                    </div>
+                  ))}
+                  <button type="button" className="btn btn-secondary" onClick={handleAddContextRow}>
+                    Anahtar Ekle
+                  </button>
+                </div>
+              ) : (
+                <div className="mt-4">
+                  <textarea
+                    id="context-json"
+                    className="input h-40 font-mono"
+                    placeholder='{"reason": "manual_review"}'
+                    value={contextJsonText}
+                    onChange={handleContextJsonChange}
+                  />
+                  {contextJsonError && (
+                    <p className="text-sm text-red-600 mt-2">{contextJsonError}</p>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 
