@@ -6,6 +6,7 @@ import {
   submitLearningCorrection,
   fetchLearnedHints,
   fetchCorrectionHistory,
+  fetchLearningDocuments,
 } from '../api';
 
 const initialFormState = {
@@ -30,6 +31,9 @@ const TemplateLearningView = ({ onBack, initialDocumentId, initialFieldId, initi
   );
   const [hints, setHints] = useState({});
   const [history, setHistory] = useState([]);
+  const [documentOptions, setDocumentOptions] = useState([]);
+  const [loadingDocuments, setLoadingDocuments] = useState(false);
+  const [documentError, setDocumentError] = useState('');
   const [formState, setFormState] = useState(() => ({
     ...initialFormState,
     documentId:
@@ -102,6 +106,8 @@ const TemplateLearningView = ({ onBack, initialDocumentId, initialFieldId, initi
       setTemplateFields([]);
       setHints({});
       setHistory([]);
+      setDocumentOptions([]);
+      setDocumentError('');
       return;
     }
 
@@ -120,6 +126,48 @@ const TemplateLearningView = ({ onBack, initialDocumentId, initialFieldId, initi
     };
 
     loadTemplateDetails();
+  }, [selectedTemplateId]);
+
+  useEffect(() => {
+    if (!selectedTemplateId) {
+      setDocumentOptions([]);
+      setDocumentError('');
+      setLoadingDocuments(false);
+      return;
+    }
+
+    let isActive = true;
+    const loadDocuments = async () => {
+      setLoadingDocuments(true);
+      setDocumentError('');
+      try {
+        const data = await fetchLearningDocuments(Number(selectedTemplateId));
+        if (!isActive) {
+          return;
+        }
+        setDocumentOptions(Array.isArray(data) ? data : []);
+      } catch (error) {
+        if (!isActive) {
+          return;
+        }
+        const message =
+          'Belgeler yüklenirken hata oluştu: ' +
+          (error.response?.data?.detail || error.message || 'Bilinmeyen hata');
+        setDocumentError(message);
+        setDocumentOptions([]);
+        toast.error(message);
+      } finally {
+        if (isActive) {
+          setLoadingDocuments(false);
+        }
+      }
+    };
+
+    loadDocuments();
+
+    return () => {
+      isActive = false;
+    };
   }, [selectedTemplateId]);
 
   useEffect(() => {
@@ -177,15 +225,36 @@ const TemplateLearningView = ({ onBack, initialDocumentId, initialFieldId, initi
     [templates, selectedTemplateId]
   );
 
+  const selectedDocument = useMemo(() => {
+    const parsedId = Number(formState.documentId);
+    if (!Number.isFinite(parsedId)) {
+      return undefined;
+    }
+
+    return documentOptions.find((document) => Number(document.id) === parsedId);
+  }, [documentOptions, formState.documentId]);
+
   const handleTemplateChange = (event) => {
     const value = event.target.value;
     setSelectedTemplateId(value);
     updateFieldSelection('');
+    setDocumentOptions([]);
+    setDocumentError('');
+    setFormState((prev) => ({
+      ...prev,
+      documentId: '',
+      templateFieldId: '',
+    }));
   };
 
   const handleFieldChange = (event) => {
     const value = event.target.value;
     updateFieldSelection(value);
+  };
+
+  const handleDocumentChange = (event) => {
+    const value = event.target.value;
+    setFormState((prev) => ({ ...prev, documentId: value }));
   };
 
   const handleFormChange = (event) => {
@@ -203,6 +272,12 @@ const TemplateLearningView = ({ onBack, initialDocumentId, initialFieldId, initi
 
     if (!selectedTemplateId) {
       toast.error('Lütfen bir şablon seçin.');
+      return;
+    }
+
+    const parsedDocumentId = Number(formState.documentId);
+    if (!Number.isFinite(parsedDocumentId)) {
+      toast.error('Belge ID geçerli bir sayı olmalıdır.');
       return;
     }
 
@@ -224,7 +299,7 @@ const TemplateLearningView = ({ onBack, initialDocumentId, initialFieldId, initi
         : undefined;
 
       await submitLearningCorrection({
-        documentId: Number(formState.documentId),
+        documentId: parsedDocumentId,
         templateFieldId: templateFieldIdValue,
         originalValue: formState.originalValue || undefined,
         correctedValue: formState.correctedValue,
@@ -319,10 +394,38 @@ const TemplateLearningView = ({ onBack, initialDocumentId, initialFieldId, initi
                 id="documentId"
                 name="documentId"
                 value={formState.documentId}
-                onChange={handleFormChange}
+                onChange={handleDocumentChange}
                 className="input"
-                placeholder="Örn. 101"
+                placeholder="Belge ID girin veya arayın"
+                list="documentId-options"
               />
+              <datalist id="documentId-options">
+                {documentOptions.map((document) => (
+                  <option
+                    key={document.id}
+                    value={document.id}
+                    label={`#${document.id} • ${document.filename} (${document.status})`}
+                  />
+                ))}
+              </datalist>
+              {loadingDocuments && (
+                <p className="text-sm text-gray-500 mt-2">Belgeler yükleniyor...</p>
+              )}
+              {documentError && (
+                <p className="text-sm text-red-600 mt-2">{documentError}</p>
+              )}
+              {!loadingDocuments && !documentError && selectedTemplateId &&
+                documentOptions.length === 0 && (
+                  <p className="text-sm text-gray-500 mt-2">
+                    Bu şablon için kayıtlı belge bulunamadı. ID'yi manuel girebilirsiniz.
+                  </p>
+                )}
+              {selectedDocument && (
+                <p className="text-sm text-gray-600 mt-2">
+                  Seçilen belge: <span className="font-medium">#{selectedDocument.id}</span> •{' '}
+                  {selectedDocument.filename} ({selectedDocument.status})
+                </p>
+              )}
             </div>
 
             <div>
