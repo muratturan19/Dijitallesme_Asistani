@@ -8,6 +8,7 @@ jest.mock('../../api', () => ({
   submitLearningCorrection: jest.fn(),
   fetchLearnedHints: jest.fn(),
   fetchCorrectionHistory: jest.fn(),
+  fetchLearningDocuments: jest.fn(),
 }));
 
 jest.mock('react-toastify', () => ({
@@ -23,12 +24,14 @@ const {
   submitLearningCorrection,
   fetchLearnedHints,
   fetchCorrectionHistory,
+  fetchLearningDocuments,
 } = require('../../api');
 const { toast } = require('react-toastify');
 
 describe('TemplateLearningView', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    fetchLearningDocuments.mockResolvedValue([]);
   });
 
   it('loads templates and displays hints and history for a selected template', async () => {
@@ -99,6 +102,50 @@ describe('TemplateLearningView', () => {
     }));
   });
 
+  it('collects context data from key/value rows and submits as JSON object', async () => {
+    getTemplates.mockResolvedValue([
+      { id: 1, name: 'Fatura', version: 3 },
+    ]);
+    getTemplate.mockResolvedValue({
+      id: 1,
+      target_fields: [
+        { id: 11, field_name: 'total_amount', display_name: 'Toplam Tutar' },
+      ],
+    });
+    fetchLearnedHints.mockResolvedValue({ template_id: 1, hints: {} });
+    fetchCorrectionHistory.mockResolvedValue([]);
+    submitLearningCorrection.mockResolvedValue({ id: 99 });
+
+    render(<TemplateLearningView />);
+
+    await waitFor(() => expect(getTemplates).toHaveBeenCalled());
+
+    await screen.findByRole('option', { name: /Fatura/ });
+
+    fireEvent.change(screen.getByLabelText('Şablon'), { target: { value: '1' } });
+
+    await waitFor(() => expect(getTemplate).toHaveBeenCalledWith(1));
+
+    fireEvent.change(screen.getByLabelText('Belge ID'), { target: { value: '101' } });
+    fireEvent.change(screen.getByLabelText('Doğru Değer'), { target: { value: 'ONAY' } });
+
+    const keyInput = screen.getByPlaceholderText('Anahtar (örn. reason)');
+    fireEvent.change(keyInput, { target: { value: 'reason' } });
+    const valueInput = screen.getByPlaceholderText('Değer (örn. "manual_review" ya da 12)');
+    fireEvent.change(valueInput, { target: { value: 'manual_review' } });
+
+    fireEvent.click(screen.getByText('Düzeltmeyi Kaydet'));
+
+    await waitFor(() => expect(submitLearningCorrection).toHaveBeenCalledWith({
+      documentId: 101,
+      templateFieldId: undefined,
+      originalValue: undefined,
+      correctedValue: 'ONAY',
+      context: { reason: 'manual_review' },
+      userId: undefined,
+    }));
+  });
+
   it('does not request correction history when the selected field id is not numeric', async () => {
     getTemplates.mockResolvedValue([
       { id: 1, name: 'Fatura', version: 3 },
@@ -115,6 +162,8 @@ describe('TemplateLearningView', () => {
     render(<TemplateLearningView />);
 
     await waitFor(() => expect(getTemplates).toHaveBeenCalled());
+
+    await screen.findByRole('option', { name: /Fatura/ });
 
     fireEvent.change(screen.getByLabelText('Şablon'), { target: { value: '1' } });
 
@@ -158,5 +207,50 @@ describe('TemplateLearningView', () => {
 
     expect(screen.getByLabelText('Belge ID')).toHaveValue('55');
     expect(screen.getByLabelText('Şablon Alanı (opsiyonel)')).toHaveValue('11');
+  });
+
+  it('shows inline validation when context value cannot be converted to JSON', async () => {
+    getTemplates.mockResolvedValue([
+      { id: 1, name: 'Fatura', version: 3 },
+    ]);
+    getTemplate.mockResolvedValue({
+      id: 1,
+      target_fields: [
+        { id: 11, field_name: 'total_amount', display_name: 'Toplam Tutar' },
+      ],
+    });
+    fetchLearnedHints.mockResolvedValue({ template_id: 1, hints: {} });
+    fetchCorrectionHistory.mockResolvedValue([]);
+
+    render(<TemplateLearningView />);
+
+    await waitFor(() => expect(getTemplates).toHaveBeenCalled());
+
+    await screen.findByRole('option', { name: /Fatura/ });
+
+    fireEvent.change(screen.getByLabelText('Şablon'), { target: { value: '1' } });
+
+    await waitFor(() => expect(fetchLearnedHints).toHaveBeenCalledWith(1, 50));
+
+    fireEvent.change(screen.getByLabelText('Belge ID'), { target: { value: '303' } });
+    fireEvent.change(screen.getByLabelText('Doğru Değer'), { target: { value: '789' } });
+
+    const keyInput = screen.getByPlaceholderText('Anahtar (örn. reason)');
+    fireEvent.change(keyInput, { target: { value: 'details' } });
+    const valueInput = screen.getByPlaceholderText('Değer (örn. "manual_review" ya da 12)');
+    fireEvent.change(valueInput, { target: { value: '{"foo":' } });
+
+    expect(
+      await screen.findByText(
+        'Değer JSON formatına dönüştürülemedi. Lütfen geçerli bir JSON ifadesi girin veya düz metin kullanın.'
+      )
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('Düzeltmeyi Kaydet'));
+
+    await waitFor(() => {
+      expect(submitLearningCorrection).not.toHaveBeenCalled();
+      expect(toast.error).toHaveBeenCalledWith('Bağlam alanındaki hataları düzeltin.');
+    });
   });
 });
