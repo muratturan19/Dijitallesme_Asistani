@@ -251,6 +251,37 @@ class TemplateManager:
 
         return numeric
 
+    @staticmethod
+    def _normalize_metadata(metadata: Any) -> Dict[str, Any]:
+        if not isinstance(metadata, dict):
+            if metadata not in (None, "", {}):
+                logger.warning(
+                    "Şablon alanı metadata bilgisi sözlük değil: tür=%s", type(metadata)
+                )
+            return {}
+
+        def sanitize(value: Any, depth: int = 0) -> Any:
+            if depth > 5:
+                logger.debug("Metadata derinliği sınırı aşıldı, değer kırpıldı.")
+                return None
+
+            if isinstance(value, (str, int, float, bool)) or value is None:
+                return value
+
+            if isinstance(value, list):
+                return [sanitize(item, depth + 1) for item in value]
+
+            if isinstance(value, dict):
+                sanitized_dict: Dict[str, Any] = {}
+                for key, item in value.items():
+                    sanitized_value = sanitize(item, depth + 1)
+                    sanitized_dict[str(key)] = sanitized_value
+                return sanitized_dict
+
+            return str(value)
+
+        return {str(key): sanitize(raw_value) for key, raw_value in metadata.items()}
+
     def _normalize_field(self, field_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if not isinstance(field_data, dict):
             return None
@@ -284,6 +315,7 @@ class TemplateManager:
             normalized.get('auto_detected_handwriting'),
             False,
         )
+        normalized['metadata'] = self._normalize_metadata(normalized.get('metadata'))
 
         return normalized
 

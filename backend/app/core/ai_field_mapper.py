@@ -604,6 +604,10 @@ class AIFieldMapper:
             'normalization': self._field_normalization_hint(data_type)
         }
 
+        metadata = field.get('metadata')
+        if isinstance(metadata, dict):
+            context['metadata'] = dict(metadata)
+
         regex_hint = field.get('regex_hint')
         if regex_hint:
             context['regex_hint'] = regex_hint
@@ -653,7 +657,13 @@ class AIFieldMapper:
                 context['preprocessing'] = preprocessing_hint
 
             if hints.get('metadata'):
-                context['metadata'] = hints['metadata']
+                merged_metadata = {}
+                if isinstance(context.get('metadata'), dict):
+                    merged_metadata.update(context['metadata'])
+                if isinstance(hints.get('metadata'), dict):
+                    merged_metadata.update(hints['metadata'])
+                if merged_metadata:
+                    context['metadata'] = merged_metadata
 
         return context
 
