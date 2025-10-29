@@ -7,6 +7,7 @@ import {
   fetchLearnedHints,
   fetchCorrectionHistory,
   fetchLearningDocuments,
+  updateTemplateFields,
 } from '../api';
 
 const initialFormState = {
@@ -83,6 +84,27 @@ const buildContextObjectFromRows = (rows) => {
   }, {});
 };
 
+const extractFieldGuidance = (field) => {
+  if (!field || typeof field !== 'object') {
+    return '';
+  }
+
+  const metadata = field.metadata;
+  if (!metadata || typeof metadata !== 'object') {
+    return '';
+  }
+
+  const candidateKeys = ['llm_guidance', 'llmGuidance', 'llm_instruction', 'guidance'];
+
+  for (const key of candidateKeys) {
+    if (metadata[key] !== undefined && metadata[key] !== null) {
+      return String(metadata[key]);
+    }
+  }
+
+  return '';
+};
+
 const TemplateLearningView = ({ onBack, initialDocumentId, initialFieldId, initialTemplateId }) => {
   const [templates, setTemplates] = useState([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState(
@@ -128,6 +150,8 @@ const TemplateLearningView = ({ onBack, initialDocumentId, initialFieldId, initi
   const [contextMode, setContextMode] = useState('form');
   const [contextJsonText, setContextJsonText] = useState('');
   const [contextJsonError, setContextJsonError] = useState('');
+  const [llmGuidance, setLlmGuidance] = useState('');
+  const [savingGuidance, setSavingGuidance] = useState(false);
   const syncContextRows = (rows) => {
     const duplicateCounts = rows.reduce((accumulator, row) => {
       const trimmedKey = row.key.trim();
@@ -333,6 +357,13 @@ const TemplateLearningView = ({ onBack, initialDocumentId, initialFieldId, initi
   const updateFieldSelection = (value) => {
     setSelectedFieldId(value);
     setFormState((prev) => ({ ...prev, templateFieldId: value }));
+    if (!value) {
+      setLlmGuidance('');
+      return;
+    }
+
+    const field = templateFields.find((item) => String(item.id) === String(value));
+    setLlmGuidance(extractFieldGuidance(field));
   };
 
   useEffect(() => {
@@ -374,6 +405,16 @@ const TemplateLearningView = ({ onBack, initialDocumentId, initialFieldId, initi
 
     loadTemplateDetails();
   }, [selectedTemplateId]);
+
+  useEffect(() => {
+    if (!selectedFieldId) {
+      setLlmGuidance('');
+      return;
+    }
+
+    const field = templateFields.find((item) => String(item.id) === String(selectedFieldId));
+    setLlmGuidance(extractFieldGuidance(field));
+  }, [templateFields, selectedFieldId]);
 
   useEffect(() => {
     if (!selectedTemplateId) {
@@ -507,6 +548,69 @@ const TemplateLearningView = ({ onBack, initialDocumentId, initialFieldId, initi
   const handleFormChange = (event) => {
     const { name, value } = event.target;
     setFormState((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const handleLlmGuidanceChange = (event) => {
+    setLlmGuidance(event.target.value);
+  };
+
+  const handleSaveGuidance = async () => {
+    if (!selectedTemplateId) {
+      toast.error('Lütfen önce bir şablon seçin.');
+      return;
+    }
+
+    if (!selectedFieldId) {
+      toast.error('Talimat kaydetmek için bir alan seçmeniz gerekiyor.');
+      return;
+    }
+
+    const templateId = Number(selectedTemplateId);
+    if (!Number.isFinite(templateId)) {
+      toast.error('Geçersiz şablon kimliği.');
+      return;
+    }
+
+    const field = templateFields.find((item) => String(item.id) === String(selectedFieldId));
+    if (!field) {
+      toast.error('Seçili alan bulunamadı.');
+      return;
+    }
+
+    const trimmedGuidance = llmGuidance.trim();
+
+    const updatedFields = templateFields.map((item) => {
+      if (String(item.id) !== String(selectedFieldId)) {
+        return item;
+      }
+
+      const metadata =
+        item && typeof item.metadata === 'object' && item.metadata !== null
+          ? { ...item.metadata }
+          : {};
+
+      if (trimmedGuidance) {
+        metadata.llm_guidance = trimmedGuidance;
+      } else {
+        delete metadata.llm_guidance;
+      }
+
+      return {
+        ...item,
+        metadata,
+      };
+    });
+
+    setSavingGuidance(true);
+    try {
+      await updateTemplateFields(templateId, updatedFields);
+      setTemplateFields(updatedFields);
+      toast.success('LLM talimatı kaydedildi.');
+    } catch (error) {
+      toast.error('Talimat kaydedilemedi: ' + (error.response?.data?.detail || error.message));
+    } finally {
+      setSavingGuidance(false);
+    }
   };
 
   const handleSubmit = async (event) => {
@@ -725,6 +829,31 @@ const TemplateLearningView = ({ onBack, initialDocumentId, initialFieldId, initi
                 ))}
               </select>
             </div>
+
+            {selectedFieldId && (
+              <div className="md:col-span-2">
+                <label className="label" htmlFor="llm-guidance">
+                  LLM Talimatı
+                </label>
+                <textarea
+                  id="llm-guidance"
+                  className="input h-32"
+                  placeholder="Alan için LLM talimatlarını buraya yazın"
+                  value={llmGuidance}
+                  onChange={handleLlmGuidanceChange}
+                />
+                <div className="flex justify-end mt-2">
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={handleSaveGuidance}
+                    disabled={savingGuidance}
+                  >
+                    {savingGuidance ? 'Kaydediliyor...' : 'Talimatı Kaydet'}
+                  </button>
+                </div>
+              </div>
+            )}
 
             <div>
               <label className="label" htmlFor="originalValue">
