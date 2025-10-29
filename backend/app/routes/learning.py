@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..core.template_learning_service import TemplateLearningService
-from ..database import CorrectionFeedback, get_db
+from ..database import CorrectionFeedback, Document, get_db
 
 
 class UserCorrectionRequest(BaseModel):
@@ -104,6 +104,17 @@ class LearnedHintsResponse(BaseModel):
     )
 
 
+class DocumentSummaryResponse(BaseModel):
+    """Lightweight representation of a processed document for selection lists."""
+
+    id: int = Field(..., example=101, description="Belge kimliği")
+    filename: str = Field(..., example="invoice_001.pdf", description="Belge dosya adı")
+    status: str = Field(..., example="completed", description="Belgenin işlenme durumu")
+
+    class Config:
+        orm_mode = True
+
+
 router = APIRouter(prefix="/api/learning", tags=["learning"])
 
 
@@ -184,6 +195,32 @@ def get_learned_hints(
     hints = service.generate_template_hints(template_id=template_id, sample_limit=sample_limit)
 
     return LearnedHintsResponse(template_id=template_id, hints=hints)
+
+
+@router.get(
+    "/documents",
+    response_model=List[DocumentSummaryResponse],
+    summary="Şablona göre belgeleri listele",
+)
+def list_learning_documents(
+    template_id: int = Query(..., description="Belgeleri filtrelemek için şablon kimliği"),
+    status: Optional[str] = Query(
+        None,
+        description="Belge durumuna göre filtre (örn. completed, processing)",
+        example="completed",
+    ),
+    db: Session = Depends(get_db),
+) -> List[DocumentSummaryResponse]:
+    """Return recently processed documents for a given template."""
+
+    query = db.query(Document).filter(Document.template_id == template_id)
+
+    if status:
+        query = query.filter(Document.status == status)
+
+    documents = query.order_by(Document.upload_date.desc()).limit(100).all()
+
+    return [DocumentSummaryResponse.from_orm(document) for document in documents]
 
 
 @router.get(

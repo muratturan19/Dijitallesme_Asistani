@@ -323,6 +323,21 @@ export const submitLearningCorrection = async ({
   return response.data;
 };
 
+export const fetchLearningDocuments = async (templateId, search) => {
+  if (!Number.isFinite(Number(templateId))) {
+    throw new Error('Geçerli bir şablon kimliği gerekli.');
+  }
+
+  const params = { template_id: Number(templateId) };
+
+  if (search !== undefined && search !== null && String(search).trim() !== '') {
+    params.status = String(search).trim();
+  }
+
+  const response = await api.get('/api/learning/documents', { params });
+  return response.data;
+};
+
 export const fetchLearnedHints = async (templateId, sampleLimit = 50) => {
   const response = await api.get(`/api/learning/hints/${templateId}`, {
     params: {
