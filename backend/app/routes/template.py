@@ -8,7 +8,8 @@ from ..config import settings
 from ..database import get_db, Template, Document
 from ..models import (
     TemplateCreate, TemplateResponse, AnalyzeRequest,
-    ReanalyzeRequest, SaveTemplateRequest, TestTemplateRequest, TemplateFieldsUpdate
+    ReanalyzeRequest, SaveTemplateRequest, TestTemplateRequest, TemplateFieldsUpdate,
+    TemplateFieldMetadataUpdate,
 )
 from ..core.template_manager import TemplateManager, TemplateNameConflictError
 from ..core.image_processor import ImageProcessor
@@ -826,6 +827,49 @@ async def update_template_fields(
     except Exception as e:
         logger.error("Şablon alan güncelleme hatası: %s", str(e))
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.patch("/{template_id}/fields/{field_id}/metadata", response_model=Dict[str, Any])
+async def update_template_field_metadata(
+    template_id: int,
+    field_id: int,
+    payload: TemplateFieldMetadataUpdate,
+    db: Session = Depends(get_db)
+):
+    """Update metadata for a single template field without recreating rows."""
+
+    try:
+        template_manager = TemplateManager(db)
+        updated_field = template_manager.update_field_metadata(
+            template_id,
+            field_id,
+            payload.metadata,
+        )
+
+        if not updated_field:
+            raise HTTPException(status_code=404, detail="Şablon alanı bulunamadı")
+
+        logger.info(
+            "Şablon alanı metadata güncellendi: template_id=%s field_id=%s",
+            template_id,
+            field_id,
+        )
+
+        return {
+            'template_id': template_id,
+            'field_id': field_id,
+            'metadata': updated_field.get('metadata', {}),
+            'message': 'Alan metadata bilgisi güncellendi',
+        }
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(
+            "Şablon alanı metadata güncelleme hatası: %s",
+            str(exc),
+        )
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @router.post("/test", response_model=Dict[str, Any])

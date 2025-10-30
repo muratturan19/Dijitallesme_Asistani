@@ -224,6 +224,19 @@ export const updateTemplateFields = async (templateId, targetFields, name) => {
   return response.data;
 };
 
+export const updateTemplateFieldMetadata = async (templateId, fieldId, metadata) => {
+  const payload = {
+    metadata: metadata && typeof metadata === 'object' ? metadata : {},
+  };
+
+  const response = await api.patch(
+    `/api/template/${templateId}/fields/${fieldId}/metadata`,
+    payload
+  );
+
+  return response.data;
+};
+
 export const testTemplate = async (documentId, templateId) => {
   const response = await api.post('/api/template/test', null, {
     params: {
