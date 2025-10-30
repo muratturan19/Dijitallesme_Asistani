@@ -9,6 +9,7 @@ import {
   fetchLearningDocuments,
   updateTemplateFields,
 } from '../api';
+import FieldGuidanceEditor from './FieldGuidanceEditor';
 
 const initialFormState = {
   documentId: '',
@@ -513,6 +514,36 @@ const TemplateLearningView = ({ onBack, initialDocumentId, initialFieldId, initi
     [templates, selectedTemplateId]
   );
 
+  const selectedField = useMemo(
+    () => templateFields.find((field) => String(field.id) === String(selectedFieldId)),
+    [templateFields, selectedFieldId]
+  );
+
+  const templateIdForGuidance = useMemo(() => {
+    const parsed = Number(selectedTemplateId);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }, [selectedTemplateId]);
+
+  const handleFieldMetadataUpdated = (fieldId, metadata) => {
+    setTemplateFields((fields) =>
+      fields.map((field) => {
+        if (String(field.id) !== String(fieldId)) {
+          return field;
+        }
+
+        if (!metadata || Object.keys(metadata).length === 0) {
+          const { metadata: _omitMetadata, ...rest } = field;
+          return { ...rest };
+        }
+
+        return {
+          ...field,
+          metadata,
+        };
+      })
+    );
+  };
+
   const selectedDocument = useMemo(() => {
     const parsedId = Number(formState.documentId);
     if (!Number.isFinite(parsedId)) {
@@ -999,6 +1030,15 @@ const TemplateLearningView = ({ onBack, initialDocumentId, initialFieldId, initi
           </button>
         </form>
       </div>
+
+      {templateIdForGuidance !== undefined && selectedField && (
+        <FieldGuidanceEditor
+          key={selectedField.id}
+          templateId={templateIdForGuidance}
+          field={selectedField}
+          onMetadataUpdated={handleFieldMetadataUpdated}
+        />
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="card">

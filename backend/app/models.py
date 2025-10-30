@@ -353,6 +353,10 @@ class TemplateFieldsUpdate(BaseModel):
     name: Optional[str] = None
 
 
+class TemplateFieldMetadataUpdate(BaseModel):
+    metadata: Optional[Dict[str, Any]] = None
+
+
 class TemplateResponse(BaseModel):
     id: int
     name: str

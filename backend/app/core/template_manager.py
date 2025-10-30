@@ -511,6 +511,96 @@ class TemplateManager:
             logger.error(f"Şablon güncelleme hatası: {str(e)}")
             return None
 
+    def update_field_metadata(
+        self,
+        template_id: int,
+        field_id: int,
+        metadata: Optional[Dict[str, Any]]
+    ) -> Optional[Dict[str, Any]]:
+        """Update metadata for a single template field without recreating rows."""
+
+        try:
+            field = self.db.query(TemplateField).filter(
+                TemplateField.template_id == template_id,
+                TemplateField.id == field_id,
+            ).first()
+
+            if not field:
+                logger.error(
+                    "Metadata güncellemesi için şablon alanı bulunamadı: template_id=%s field_id=%s",
+                    template_id,
+                    field_id,
+                )
+                return None
+
+            template = self.get_template(template_id)
+
+            if not template:
+                logger.error(
+                    "Metadata güncellemesi için şablon bulunamadı: template_id=%s",
+                    template_id,
+                )
+                return None
+
+            normalized_metadata = (
+                self._normalize_metadata(metadata)
+                if metadata is not None
+                else {}
+            )
+
+            updated_field: Optional[Dict[str, Any]] = None
+            updated_fields: List[Dict[str, Any]] = []
+
+            target_fields = template.target_fields or []
+
+            for entry in target_fields:
+                if not isinstance(entry, dict):
+                    updated_fields.append(entry)
+                    continue
+
+                entry_id = entry.get('id')
+                entry_name = entry.get('field_name')
+
+                matches_field = False
+                if entry_id is not None and str(entry_id) == str(field_id):
+                    matches_field = True
+                elif entry_id is None and entry_name and entry_name == field.field_name:
+                    matches_field = True
+
+                if matches_field and updated_field is None:
+                    current = dict(entry)
+                    if normalized_metadata:
+                        current['metadata'] = normalized_metadata
+                    else:
+                        current.pop('metadata', None)
+
+                    updated_fields.append(current)
+                    updated_field = current
+                else:
+                    updated_fields.append(entry)
+
+            if updated_field is None:
+                logger.error(
+                    "Metadata güncellemesi sırasında hedef alan kaydı bulunamadı: template_id=%s field_id=%s",
+                    template_id,
+                    field_id,
+                )
+                return None
+
+            template.target_fields = updated_fields
+            self.db.commit()
+            self.db.refresh(template)
+
+            return updated_field
+
+        except Exception as exc:  # pragma: no cover - defensive logging
+            self.db.rollback()
+            logger.error(
+                "Şablon alanı metadata güncelleme hatası: %s",
+                str(exc),
+            )
+            return None
+
     def delete_template(self, template_id: int) -> bool:
         """
         Delete template
