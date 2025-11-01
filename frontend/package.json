@@ -8,8 +8,7 @@
     "react-dom": "latest",
     "react-dropzone": "latest",
     "react-router-dom": "latest",
-    "react-toastify": "latest",
-    "recharts": "^3.3.0"
+    "react-toastify": "latest"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.9.1",
