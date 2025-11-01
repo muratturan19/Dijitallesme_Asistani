@@ -12,7 +12,7 @@ import pytesseract
 
 from .config import settings
 from .database import init_db
-from .routes import upload, template, batch, export, diag, learning
+from .routes import upload, template, batch, export, diag, learning, optimizer
 
 # Configure logging
 logging.basicConfig(
@@ -145,6 +145,7 @@ app.include_router(batch.router)
 app.include_router(export.router)
 app.include_router(diag.router)
 app.include_router(learning.router)
+app.include_router(optimizer.router)
 
 # Mount static files (for serving uploaded files)
 try:

@@ -12,3 +12,4 @@ openai
 python-dotenv
 aiofiles
 alembic>=1.13.0
+pyyaml
