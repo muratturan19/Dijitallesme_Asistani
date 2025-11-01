@@ -178,16 +178,6 @@ export const uploadBatchFiles = async (files, templateId) => {
   return response.data;
 };
 
-export const optimizeThresholds = async (formData) => {
-  const response = await api.post('/api/optimize/thresholds', formData, {
-    headers: {
-      'Content-Type': 'multipart/form-data',
-    },
-  });
-
-  return response.data;
-};
-
 // Template API
 export const analyzeDocument = async (documentId, templateId) => {
   const response = await api.post('/api/template/analyze', {
