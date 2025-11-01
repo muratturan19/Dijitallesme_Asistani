@@ -6,6 +6,7 @@ import FieldMapper from './components/FieldMapper';
 import BatchUpload from './components/BatchUpload';
 import Dashboard from './components/Dashboard';
 import TemplateLearningView from './components/TemplateLearningView';
+import ThresholdOptimizer from './components/ThresholdOptimizer';
 
 function App() {
   const [currentView, setCurrentView] = useState('dashboard');
@@ -68,6 +69,7 @@ function App() {
       wizard: currentView === 'wizard' || currentView === 'fieldMapper',
       batch: currentView === 'batchUpload' || (currentView === 'dashboard' && dashboardSection === 'pending'),
       learning: currentView === 'learning',
+      optimizer: currentView === 'optimizer',
     }),
     [currentView, dashboardSection]
   );
@@ -116,6 +118,16 @@ function App() {
                 }`}
               >
                 Şablonu İyileştir
+              </button>
+              <button
+                onClick={() => setCurrentView('optimizer')}
+                className={`px-4 py-2 rounded ${
+                  isViewActive.optimizer
+                    ? 'bg-primary-600 text-white'
+                    : 'text-gray-600 hover:bg-gray-100'
+                }`}
+              >
+                Threshold Optimize Et
               </button>
             </nav>
           </div>
@@ -166,6 +178,8 @@ function App() {
             initialTemplateId={learningDefaults.templateId}
           />
         )}
+
+        {currentView === 'optimizer' && <ThresholdOptimizer />}
       </main>
 
       {/* Toast Notifications */}
